@@ -12,10 +12,10 @@ def _():
     import marimo as mo
     import polars as pl
 
-    from health import schema, validate
+    from health import metrics, schema, validate
     from health.cli import OUTPUT_DIR
 
-    return OUTPUT_DIR, Path, alt, mo, pl, schema, validate
+    return OUTPUT_DIR, Path, alt, metrics, mo, pl, schema, validate
 
 
 @app.cell
@@ -194,6 +194,596 @@ def _(everything, validate):
 
 @app.cell
 def _():
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+    ## Daily aggregation
+
+    One row per subject and day. Each source type keeps its own series, so a watch
+    and a phone that both log steps stay side by side as `StepCount@wearable` and
+    `StepCount@phone` rather than being reconciled into one number here.
+
+    `daily_long` collapses those back to one value per series when a single number
+    is wanted. The rule for each metric is listed rather than guessed, so a metric
+    nobody has thought about lands in the unhandled list below instead of being
+    quietly summed.
+    """)
+    return
+
+
+@app.cell
+def _(metrics):
+    # How each metric collapses into one number per day.
+    #
+    #   sum       cumulative over the day: steps, calories, distance, food
+    #   mean      a level that happens to be sampled many times: heart rate, speed
+    #   duration  category intervals, added up in seconds: sleep stages, mindfulness
+    #   count     category events with no meaningful length: stand hours, alerts
+    #   skip      not a property of a day: height, waist, a goal setting
+    #
+    # Traits like height are dropped rather than carried forward, since a daily
+    # table implies the value was measured that day.
+    _Q = metrics.QUANTITY_PREFIX
+    _C = metrics.CATEGORY_PREFIX
+
+    DAILY_SUM = [
+        _Q + name
+        for name in (
+            "ActiveEnergyBurned",
+            "BasalEnergyBurned",
+            "AppleExerciseTime",
+            "AppleStandTime",
+            "TimeInDaylight",
+            "StepCount",
+            "FlightsClimbed",
+            "DistanceWalkingRunning",
+            "DistanceCycling",
+            "DistancePaddleSports",
+            "DietaryEnergyConsumed",
+            "DietaryCarbohydrates",
+            "DietaryProtein",
+            "DietaryFatTotal",
+            "DietaryFatSaturated",
+            "DietaryFatMonounsaturated",
+            "DietaryFatPolyunsaturated",
+            "DietaryCholesterol",
+            "DietaryFiber",
+            "DietarySugar",
+            "DietarySodium",
+            "DietaryPotassium",
+            "DietaryCalcium",
+            "DietaryIron",
+            "DietaryVitaminC",
+            "DietaryWater",
+        )
+    ] + [metrics.SLEEP_DURATION_DAILY]
+
+    DAILY_MEAN = [
+        _Q + name
+        for name in (
+            "HeartRate",
+            "RestingHeartRate",
+            "WalkingHeartRateAverage",
+            "HeartRateRecoveryOneMinute",
+            "HeartRateVariabilitySDNN",
+            "RespiratoryRate",
+            "OxygenSaturation",
+            "VO2Max",
+            "PhysicalEffort",
+            "BodyMass",
+            "BodyMassIndex",
+            "BodyFatPercentage",
+            "LeanBodyMass",
+            "WalkingSpeed",
+            "WalkingStepLength",
+            "WalkingAsymmetryPercentage",
+            "WalkingDoubleSupportPercentage",
+            "AppleWalkingSteadiness",
+            "SixMinuteWalkTestDistance",
+            "StairAscentSpeed",
+            "StairDescentSpeed",
+            "RunningSpeed",
+            "RunningPower",
+            "RunningStrideLength",
+            "RunningGroundContactTime",
+            "RunningVerticalOscillation",
+            "CyclingCadence",
+            "CyclingPower",
+            "PaddleSportsSpeed",
+            "EnvironmentalAudioExposure",
+            "HeadphoneAudioExposure",
+        )
+    ]
+
+    DAILY_DURATION = [_C + name for name in ("SleepAnalysis", "MindfulSession")]
+
+    DAILY_COUNT = [
+        _C + name
+        for name in (
+            "AppleStandHour",
+            "AudioExposureEvent",
+            "HeadphoneAudioExposureEvent",
+            "ToothbrushingEvent",
+        )
+    ]
+
+    # A goal setting, and two body measurements that are not about the day.
+    DAILY_SKIP = [_Q + "Height", _Q + "WaistCircumference", "HKDataTypeSleepDurationGoal"]
+
+    DAILY_RULES = {
+        "sum": DAILY_SUM,
+        "mean": DAILY_MEAN,
+        "duration": DAILY_DURATION,
+        "count": DAILY_COUNT,
+    }
+    None
+    return DAILY_RULES, DAILY_SKIP
+
+
+@app.cell
+def _(everything, pl):
+    # Everything a daily rollup needs, with the categoricals cast to plain strings
+    # so the four rule frames can be concatenated.
+    #
+    # The day comes from start_local, which puts a night of sleep on the day it
+    # started. Fine for now, but worth revisiting: sleep is usually reported against
+    # the morning you wake up.
+    daily_base = everything.with_columns(
+        pl.col("start_local").dt.date().alias("day"),
+        pl.col("metric").cast(pl.String),
+        pl.col("value_str").cast(pl.String),
+        pl.col("source_type").cast(pl.String),
+    )
+    return (daily_base,)
+
+
+@app.cell
+def _(metrics, pl):
+    # Everything a series is grouped by. The source type stays in the key, so each
+    # device ends up with its own column rather than being merged with the others.
+    DAILY_KEYS = ["subject_id", "day", "metric", "value_str", "source_type"]
+
+    def daily_intervals(frame, names):
+        """Seconds covered by the named category metrics, per key.
+
+        Overlapping intervals are merged rather than added. One of the sleep apps
+        rewrites the same interval hundreds of times, which turned a seven hour night
+        into twelve, and a watch that logs in-bed alongside asleep overlaps by design.
+        Sorting by start and opening a new block whenever a row begins after every
+        earlier row has ended gives the covered time instead of the recorded time.
+        """
+        starts_a_gap = pl.col("start_utc") > pl.col("end_utc").cum_max().shift(1).over(DAILY_KEYS)
+        block_seconds = (pl.col("end_utc").max() - pl.col("start_utc").min()).dt.total_seconds()
+
+        return (
+            frame.filter(pl.col("metric").is_in(names))
+            .sort(*DAILY_KEYS, "start_utc")
+            .with_columns(starts_a_gap.fill_null(True).cum_sum().over(DAILY_KEYS).alias("block"))
+            .group_by(*DAILY_KEYS, "block")
+            .agg(block_seconds.alias("covered"))
+            .group_by(*DAILY_KEYS)
+            .agg(pl.col("covered").sum().cast(pl.Float64).alias("value"))
+        )
+
+    def daily_rule(frame, rule, names):
+        """One value per subject, day, category value and source type."""
+        if rule == "duration":
+            per_source = daily_intervals(frame, names)
+        else:
+            _values = {
+                "sum": pl.col("value_num").sum(),
+                "mean": pl.col("value_num").mean(),
+                # Distinct starts, not rows: the same event is often written twice.
+                "count": pl.col("start_utc").n_unique(),
+            }
+            per_source = (
+                frame.filter(pl.col("metric").is_in(names))
+                .group_by(*DAILY_KEYS)
+                .agg(_values[rule].cast(pl.Float64).alias("value"))
+            )
+
+        # Carried through so the sources can be combined later without looking the
+        # rule up again.
+        return per_source.with_columns(pl.lit(rule).alias("rule"))
+
+    def series_name(metric, value):
+        """A short name for a metric. Category metrics get one series per value."""
+        name = metric.removeprefix(metrics.QUANTITY_PREFIX).removeprefix(metrics.CATEGORY_PREFIX)
+        if value is None:
+            return name
+        stage = value.removeprefix(metrics.VALUE_PREFIX).removeprefix(name)
+        return f"{name}/{stage}" if stage and stage != "NotApplicable" else f"{name}/Event"
+
+    return daily_rule, series_name
+
+
+@app.cell
+def _(DAILY_RULES, daily_base, daily_rule, pl, series_name):
+    daily_by_source = (
+        pl.concat([daily_rule(daily_base, rule, names) for rule, names in DAILY_RULES.items()])
+        .collect()
+        .with_columns(
+            pl.struct("metric", "value_str")
+            .map_elements(
+                lambda row: series_name(row["metric"], row["value_str"]),
+                return_dtype=pl.String,
+            )
+            .alias("series")
+        )
+        .select("subject_id", "day", "series", "source_type", "rule", "value")
+        .sort("subject_id", "day", "series", "source_type")
+    )
+    daily_by_source
+    return (daily_by_source,)
+
+
+@app.cell
+def _(daily_by_source, pl):
+    # The same table with the sources reconciled, for when one number per day is
+    # wanted. Totals are combined by taking the largest, on the theory that the
+    # source which saw the most of the day is the one to believe, since adding a
+    # watch and a phone would roughly double the real figure. Levels like heart rate
+    # are averaged instead, since there is nothing to double count.
+    daily_long = (
+        daily_by_source.group_by("subject_id", "day", "series", "rule")
+        .agg(
+            pl.col("value").mean().alias("averaged"),
+            pl.col("value").max().alias("largest"),
+        )
+        .with_columns(
+            pl.when(pl.col("rule") == "mean")
+            .then(pl.col("averaged"))
+            .otherwise(pl.col("largest"))
+            .alias("value")
+        )
+        .select("subject_id", "day", "series", "value")
+        .sort("subject_id", "day", "series")
+    )
+    daily_long
+    return (daily_long,)
+
+
+@app.cell
+def _(DAILY_RULES, DAILY_SKIP, everything, pl):
+    # Anything present in the data that no rule covers. Should stay empty.
+    _covered = set(DAILY_SKIP).union(*DAILY_RULES.values())
+    _present = set(everything.select("metric").unique().collect().to_series().cast(pl.String))
+    sorted(_present - _covered) or "every metric has a rule"
+    return
+
+
+@app.cell
+def _(daily_by_source, mo, pl):
+    # Column per series and source type. Sorted by name so the two spellings of a
+    # metric that more than one device records end up next to each other.
+    _columns = daily_by_source.with_columns(
+        (pl.col("series") + "@" + pl.col("source_type")).alias("column")
+    )
+    _pivoted = _columns.pivot(on="column", index=["subject_id", "day"], values="value")
+    _index = ["subject_id", "day"]
+
+    daily_wide = _pivoted.select(
+        *_index, *sorted(c for c in _pivoted.columns if c not in _index)
+    ).sort(*_index)
+
+    mo.vstack(
+        [
+            mo.md(f"{daily_wide.height:,} subject-days, {daily_wide.width - 2} series"),
+            mo.ui.table(daily_wide.head(300), selection=None),
+        ]
+    )
+    return
+
+
+@app.cell
+def _(daily_by_source, mo):
+    daily_series_pick = mo.ui.dropdown(
+        sorted(daily_by_source["series"].unique()),
+        value="StepCount",
+        label="daily series",
+    )
+    daily_series_pick
+    return (daily_series_pick,)
+
+
+@app.cell
+def _(alt, daily_by_source, daily_series_pick, mo, pl):
+    # One line per source type, so a metric two devices both record shows the gap
+    # between them rather than hiding it.
+    _one = daily_by_source.filter(pl.col("series") == daily_series_pick.value)
+
+    _chart = (
+        alt.Chart(_one)
+        .mark_line()
+        .encode(
+            x=alt.X("day:T", title=None),
+            y=alt.Y("value:Q", title=daily_series_pick.value),
+            color=alt.Color("source_type:N"),
+            row=alt.Row("subject_id:N", title=None),
+            tooltip=["subject_id:N", "source_type:N", "day:T", "value:Q"],
+        )
+        .properties(height=140)
+    )
+    mo.ui.altair_chart(_chart) if _one.height else mo.md("Nothing for this series.")
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+    ## Feature sets
+
+    A feature set is only usable where every feature in it is present on the same
+    day, so the question is not which features exist but how many days survive
+    requiring all of them at once.
+
+    Subjects are scored on their own timelines. Nothing here asks them to line up
+    with each other, so a set is worth the sum of what each subject gets from it,
+    and the run lengths matter more than the calendar.
+    """)
+    return
+
+
+@app.cell
+def _(daily_long, metrics, mo, pl):
+    # One column per feature. Sleep needs a bridge first: subject_04 ships a daily
+    # total, subject_02 only ever recorded time in bed, and the other two have per
+    # stage intervals. SleepTotal takes the best available of those, in that order.
+    # The detailed stages win over AsleepUnspecified rather than adding to it, since
+    # a phone app and a watch describing the same night would otherwise stack into
+    # fourteen hour nights.
+    SLEEP_STAGES = [
+        "SleepAnalysis/AsleepCore",
+        "SleepAnalysis/AsleepDeep",
+        "SleepAnalysis/AsleepREM",
+    ]
+
+    _staged = pl.any_horizontal([pl.col(c).is_not_null() for c in SLEEP_STAGES])
+    _sleep_total = pl.coalesce(
+        pl.when(_staged).then(pl.sum_horizontal([pl.col(c) for c in SLEEP_STAGES])),
+        pl.col("SleepAnalysis/AsleepUnspecified"),
+        pl.col("SleepAnalysis/InBed"),
+        pl.col(metrics.SLEEP_DURATION_DAILY),
+    )
+
+    daily_features = (
+        daily_long.pivot(on="series", index=["subject_id", "day"], values="value")
+        .with_columns(_sleep_total.alias("SleepTotal"))
+        .sort("subject_id", "day")
+    )
+
+    FEATURE_NAMES = sorted(c for c in daily_features.columns if c not in ("subject_id", "day"))
+    mo.md(f"{daily_features.height:,} subject-days, {len(FEATURE_NAMES)} candidate features")
+    return FEATURE_NAMES, SLEEP_STAGES, daily_features
+
+
+@app.cell
+def _(daily_features, pl):
+    # How dense each feature is, measured against the subject's own span rather
+    # than the calendar, so a subject who joined late is not penalised for it.
+    _span = daily_features.group_by("subject_id").agg(
+        (pl.col("day").max() - pl.col("day").min()).dt.total_days().alias("span")
+    )
+
+    feature_coverage = (
+        daily_features.unpivot(
+            index=["subject_id", "day"], variable_name="feature", value_name="value"
+        )
+        .drop_nulls("value")
+        .group_by("subject_id", "feature")
+        .agg(pl.col("day").n_unique().alias("days"))
+        .join(_span, on="subject_id")
+        .with_columns((pl.col("days") / (pl.col("span") + 1)).alias("density"))
+        .select("subject_id", "feature", "days", "density")
+        .sort("feature", "subject_id")
+    )
+    feature_coverage
+    return (feature_coverage,)
+
+
+@app.cell
+def _(alt, feature_coverage, mo, pl):
+    # Features nobody recorded for a month are dropped, or the chart is mostly
+    # blank rows. The ordering puts the features shared by the most subjects first,
+    # which is the order you want when picking a set.
+    _usable = (
+        feature_coverage.filter(pl.col("days") >= 30)
+        .group_by("feature")
+        .agg(pl.len().alias("subjects"), pl.col("density").sum().alias("weight"))
+        .sort("subjects", "weight", descending=True)
+    )
+    _order = _usable["feature"].to_list()
+
+    _grid = feature_coverage.filter(pl.col("feature").is_in(_order))
+
+    mo.ui.altair_chart(
+        alt.Chart(_grid)
+        .mark_rect()
+        .encode(
+            x=alt.X("subject_id:N", title=None),
+            y=alt.Y("feature:N", title=None, sort=_order),
+            color=alt.Color("density:Q", scale=alt.Scale(scheme="viridis"), title="density"),
+            tooltip=["feature:N", "subject_id:N", "days:Q", "density:Q"],
+        )
+        .properties(width=200, height=18 * len(_order))
+    )
+    return
+
+
+@app.cell
+def _(FEATURE_NAMES, SLEEP_STAGES):
+    # Candidate sets, narrow to wide. Named so the tradeoff is legible: every
+    # feature added costs subjects, days, or both.
+    _ACTIVITY = [
+        "StepCount",
+        "DistanceWalkingRunning",
+        "FlightsClimbed",
+        "ActiveEnergyBurned",
+        "BasalEnergyBurned",
+    ]
+    _GAIT = [
+        "WalkingSpeed",
+        "WalkingStepLength",
+        "WalkingAsymmetryPercentage",
+        "WalkingDoubleSupportPercentage",
+    ]
+    _STAGES = [*SLEEP_STAGES, "SleepAnalysis/Awake", "SleepAnalysis/InBed"]
+
+    FEATURE_SETS = {
+        "steps and heart": ["StepCount", "HeartRate"],
+        "core": ["StepCount", "HeartRate", "SleepTotal"],
+        "cardio": ["HeartRate", "RestingHeartRate", "HeartRateVariabilitySDNN"],
+        "activity": _ACTIVITY,
+        "gait": _GAIT,
+        "sleep stages": _STAGES,
+        "core plus activity": ["HeartRate", "SleepTotal", *_ACTIVITY],
+        "rich": ["HeartRate", "RestingHeartRate", "SleepTotal", *_ACTIVITY, *_GAIT],
+    }
+
+    # Nothing here should be a typo.
+    _unknown = {f for features in FEATURE_SETS.values() for f in features} - set(FEATURE_NAMES)
+    assert not _unknown, sorted(_unknown)
+    None
+    return (FEATURE_SETS,)
+
+
+@app.cell
+def _(daily_features, pl):
+    def longest_runs(complete):
+        """Longest unbroken stretch of complete days, per subject.
+
+        A new block starts wherever a day does not follow the one before it, so the
+        biggest block is the longest run. Two subjects with the same total are not
+        worth the same if one has it in a block and the other in scattered days,
+        since anything with a lag or a rolling window needs the block.
+        """
+        breaks = (pl.col("day").diff().over("subject_id") > pl.duration(days=1)).fill_null(True)
+        return (
+            complete.with_columns(breaks.cum_sum().over("subject_id").alias("block"))
+            .group_by("subject_id", "block")
+            .len()
+            .group_by("subject_id")
+            .agg(pl.col("len").max().alias("run"))
+        )
+
+    def set_coverage(features):
+        """Days where every one of these features is present, per subject."""
+        complete = (
+            daily_features.drop_nulls(subset=features)
+            .select("subject_id", "day")
+            .sort("subject_id", "day")
+        )
+        totals = complete.group_by("subject_id").agg(
+            pl.len().alias("days"),
+            pl.col("day").min().alias("first"),
+            pl.col("day").max().alias("last"),
+        )
+        return (
+            totals.join(longest_runs(complete), on="subject_id")
+            .select("subject_id", "days", "run", "first", "last")
+            .sort("subject_id")
+        )
+
+    def set_summary(name, features):
+        """One row describing what a set is worth across all subjects."""
+        per_subject = set_coverage(features)
+        if per_subject.is_empty():
+            return None
+
+        return {
+            "set": name,
+            "features": len(features),
+            "subjects": per_subject.height,
+            "subject_days": int(per_subject["days"].sum()),
+            "worst_subject": int(per_subject["days"].min()),
+            "best_subject": int(per_subject["days"].max()),
+            "worst_run": int(per_subject["run"].min()),
+            "best_run": int(per_subject["run"].max()),
+        }
+
+    return set_coverage, set_summary
+
+
+@app.cell
+def _(FEATURE_SETS, mo, pl, set_summary):
+    set_scores = pl.DataFrame(
+        [row for name, features in FEATURE_SETS.items() if (row := set_summary(name, features))]
+    )
+    mo.ui.table(set_scores, selection=None)
+    return
+
+
+@app.cell
+def _(FEATURE_SETS, alt, mo, pl, set_coverage):
+    _bars = pl.concat(
+        [
+            set_coverage(features).with_columns(pl.lit(name).alias("set"))
+            for name, features in FEATURE_SETS.items()
+        ]
+    )
+
+    mo.ui.altair_chart(
+        alt.Chart(_bars)
+        .mark_bar()
+        .encode(
+            x=alt.X("subject_id:N", title=None, axis=alt.Axis(labels=False)),
+            y=alt.Y("days:Q", title="complete days"),
+            color=alt.Color("subject_id:N"),
+            column=alt.Column("set:N", title=None, sort=list(FEATURE_SETS)),
+            tooltip=["set:N", "subject_id:N", "days:Q", "first:T", "last:T"],
+        )
+        .properties(width=70, height=200)
+    )
+    return
+
+
+@app.cell
+def _(FEATURE_NAMES, FEATURE_SETS, mo):
+    feature_build = mo.ui.multiselect(
+        FEATURE_NAMES,
+        value=FEATURE_SETS["core"],
+        label="build a set",
+    )
+    feature_build
+    return (feature_build,)
+
+
+@app.cell
+def _(alt, daily_features, feature_build, mo, set_coverage):
+    _picked = list(feature_build.value)
+
+    if not _picked:
+        _out = mo.md("Pick at least one feature.")
+    else:
+        _per_subject = set_coverage(_picked)
+        _complete = daily_features.drop_nulls(subset=_picked).select("subject_id", "day")
+
+        # A tick per complete day. Gaps in a row are the thing to look at: a subject
+        # with the same total spread over three years is worth less than one with it
+        # in a solid block.
+        _timeline = (
+            alt.Chart(_complete)
+            .mark_tick(thickness=1)
+            .encode(
+                x=alt.X("day:T", title=None),
+                y=alt.Y("subject_id:N", title=None),
+                color=alt.Color("subject_id:N", legend=None),
+                tooltip=["subject_id:N", "day:T"],
+            )
+            .properties(height=110)
+        )
+        _out = mo.vstack(
+            [
+                mo.md(f"{_per_subject['days'].sum():,} subject-days across {_per_subject.height}"),
+                mo.ui.table(_per_subject, selection=None),
+                mo.ui.altair_chart(_timeline),
+            ]
+        )
+
+    _out
     return
 
 
