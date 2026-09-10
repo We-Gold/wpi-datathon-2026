@@ -206,10 +206,10 @@ def _(mo):
     and a phone that both log steps stay side by side as `StepCount@wearable` and
     `StepCount@phone` rather than being reconciled into one number here.
 
-    `daily_long` collapses those back to one value per series when a single number
-    is wanted. The rule for each metric is listed rather than guessed, so a metric
-    nobody has thought about lands in the unhandled list below instead of being
-    quietly summed.
+    `daily_long` picks one source per day using the trust order below, for when a
+    single number is wanted. The rule for each metric is listed rather than guessed,
+    so a metric nobody has thought about lands in the unhandled list below instead
+    of being quietly summed.
     """)
     return
 
@@ -421,25 +421,54 @@ def _(DAILY_RULES, daily_base, daily_rule, pl, series_name):
 
 
 @app.cell
-def _(daily_by_source, pl):
-    # The same table with the sources reconciled, for when one number per day is
-    # wanted. Totals are combined by taking the largest, on the theory that the
-    # source which saw the most of the day is the one to believe, since adding a
-    # watch and a phone would roughly double the real figure. Levels like heart rate
-    # are averaged instead, since there is nothing to double count.
+def _(pl, schema):
+    # Which source to believe when more than one recorded the same day. Most
+    # trusted first. Nothing is averaged or added across sources: the best available
+    # source wins the day outright and the others are dropped.
+    #
+    # A watch leads because it is worn, so it sees the whole day and measures at the
+    # wrist rather than inferring from a pocket. A phone beats an app because the
+    # apps here mostly re-import partial histories. Manual entry, anything derived
+    # and anything unclassified come last.
+    SOURCE_TRUST = ["wearable", "scale", "phone", "app", "manual", "derived", "unknown"]
+
+    # Body composition is the exception. A scale is the instrument for it, and a
+    # watch only ever holds a figure someone typed in somewhere else.
+    BODY_TRUST = ["scale", "manual", "wearable", "phone", "app", "derived", "unknown"]
+    BODY_SERIES = ["BodyMass", "BodyFatPercentage", "LeanBodyMass", "BodyMassIndex"]
+
+    # Both orders have to name every source type the schema allows, or a day
+    # recorded by an unlisted source would silently drop out of the ranking.
+    assert set(SOURCE_TRUST) == set(schema.SOURCE_TYPES), sorted(schema.SOURCE_TYPES)
+    assert set(BODY_TRUST) == set(schema.SOURCE_TYPES)
+
+    def trust_rank():
+        """Rank of each row's source, lowest is most trusted."""
+        general = pl.col("source_type").replace_strict(
+            {name: i for i, name in enumerate(SOURCE_TRUST)}, return_dtype=pl.Int8
+        )
+        body = pl.col("source_type").replace_strict(
+            {name: i for i, name in enumerate(BODY_TRUST)}, return_dtype=pl.Int8
+        )
+        return pl.when(pl.col("series").is_in(BODY_SERIES)).then(body).otherwise(general)
+
+    return (trust_rank,)
+
+
+@app.cell
+def _(daily_by_source, pl, trust_rank):
+    # The same table with one source picked per day, for when a single number is
+    # wanted. The chosen source is carried through, since a series that keeps
+    # falling back to a phone is worth knowing about before it goes into a model.
     daily_long = (
-        daily_by_source.group_by("subject_id", "day", "series", "rule")
+        daily_by_source.with_columns(trust_rank().alias("trust"))
+        .sort("subject_id", "day", "series", "trust")
+        .group_by("subject_id", "day", "series", maintain_order=True)
         .agg(
-            pl.col("value").mean().alias("averaged"),
-            pl.col("value").max().alias("largest"),
+            pl.col("value").first(),
+            pl.col("source_type").first().alias("chosen"),
+            pl.col("source_type").len().alias("available"),
         )
-        .with_columns(
-            pl.when(pl.col("rule") == "mean")
-            .then(pl.col("averaged"))
-            .otherwise(pl.col("largest"))
-            .alias("value")
-        )
-        .select("subject_id", "day", "series", "value")
         .sort("subject_id", "day", "series")
     )
     daily_long
@@ -780,6 +809,146 @@ def _(alt, daily_features, feature_build, mo, set_coverage):
                 mo.md(f"{_per_subject['days'].sum():,} subject-days across {_per_subject.height}"),
                 mo.ui.table(_per_subject, selection=None),
                 mo.ui.altair_chart(_timeline),
+            ]
+        )
+
+    _out
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+    ## Which features travel together
+
+    Most features come from one device recording a whole family of things at once,
+    so requiring one often gets several more for nothing. These cells measure that
+    directly, over pooled subject-days since the timelines are independent.
+
+    `given_a` is the share of days holding the row feature that also hold the column
+    feature, which is the asymmetric question worth asking: active energy nearly
+    always brings basal energy, but plenty of days have basal energy alone.
+    `jaccard` is the symmetric version, used to order the chart so families sit in
+    blocks.
+    """)
+    return
+
+
+@app.cell
+def _(daily_features, pl):
+    _present = (
+        daily_features.unpivot(index=["subject_id", "day"], variable_name="feature", value_name="v")
+        .drop_nulls("v")
+        .select("subject_id", "day", "feature")
+    )
+    _totals = _present.group_by("feature").len().rename({"len": "days"})
+
+    # Every feature against every other one on the same subject-day. The join is
+    # wide but shallow, around fourteen features on a typical day.
+    feature_pairs = (
+        _present.join(_present, on=["subject_id", "day"], suffix="_b")
+        .group_by("feature", "feature_b")
+        .len()
+        .rename({"len": "both"})
+        .join(_totals, on="feature")
+        .join(_totals.rename({"feature": "feature_b", "days": "days_b"}), on="feature_b")
+        .with_columns(
+            (pl.col("both") / pl.col("days")).alias("given_a"),
+            (pl.col("both") / (pl.col("days") + pl.col("days_b") - pl.col("both"))).alias(
+                "jaccard"
+            ),
+        )
+        .select("feature", "feature_b", "both", "days", "days_b", "given_a", "jaccard")
+    )
+    feature_pairs
+    return (feature_pairs,)
+
+
+@app.function
+def similar_order(pairs, counts):
+    """Features arranged so the ones that co-occur end up next to each other.
+
+    Starts at the most common feature and repeatedly takes whichever unused one
+    overlaps it most. Crude next to real clustering, but enough to make the
+    families show up as blocks and it needs no extra dependency.
+    """
+    overlap = {
+        (row["feature"], row["feature_b"]): row["jaccard"]
+        for row in pairs.select("feature", "feature_b", "jaccard").iter_rows(named=True)
+    }
+
+    remaining = dict(counts)
+    current = max(remaining, key=remaining.get)
+    order = []
+    while remaining:
+        del remaining[current]
+        order.append(current)
+        if not remaining:
+            break
+        current = max(remaining, key=lambda f: (overlap.get((order[-1], f), 0.0), remaining[f]))
+    return order
+
+
+@app.cell
+def _(alt, feature_pairs, mo, pl):
+    # Features seen on fewer than thirty days are left out, or the chart is mostly
+    # empty rows nobody would build a set from.
+    _common = feature_pairs.filter(pl.col("feature") == pl.col("feature_b")).filter(
+        pl.col("days") >= 30
+    )
+    _counts = dict(zip(_common["feature"], _common["days"], strict=True))
+
+    _grid = feature_pairs.filter(
+        pl.col("feature").is_in(list(_counts)) & pl.col("feature_b").is_in(list(_counts))
+    )
+    feature_order = similar_order(_grid, _counts)
+
+    mo.ui.altair_chart(
+        alt.Chart(_grid)
+        .mark_rect()
+        .encode(
+            x=alt.X("feature_b:N", title=None, sort=feature_order),
+            y=alt.Y("feature:N", title=None, sort=feature_order),
+            color=alt.Color(
+                "given_a:Q",
+                scale=alt.Scale(scheme="blues", domain=[0, 1]),
+                title="share of row's days",
+            ),
+            tooltip=["feature:N", "feature_b:N", "both:Q", "days:Q", "given_a:Q", "jaccard:Q"],
+        )
+        .properties(width=16 * len(feature_order), height=16 * len(feature_order))
+    )
+    return
+
+
+@app.cell
+def _(daily_features, feature_build, mo, pl):
+    # What a set picks up for nothing. Anything listed here is present on nearly
+    # every day the chosen set is already complete, so adding it costs almost no
+    # days. Driven by the multiselect above.
+    _chosen = list(feature_build.value)
+    _complete = daily_features.drop_nulls(subset=_chosen) if _chosen else daily_features.clear()
+
+    if _complete.is_empty():
+        free_features = daily_features.clear().select("subject_id")
+        _out = mo.md("Pick a set above.")
+    else:
+        free_features = (
+            _complete.select(pl.exclude("subject_id", "day"))
+            .select(pl.all().is_not_null().sum())
+            .unpivot(variable_name="feature", value_name="days")
+            .filter(~pl.col("feature").is_in(_chosen))
+            .with_columns((pl.col("days") / _complete.height).alias("kept"))
+            .filter(pl.col("kept") > 0.5)
+            .sort("kept", descending=True)
+        )
+        _out = mo.vstack(
+            [
+                mo.md(
+                    f"{_complete.height:,} complete days for the {len(_chosen)} chosen features. "
+                    f"Features below survive on more than half of them."
+                ),
+                mo.ui.table(free_features, selection=None),
             ]
         )
 
