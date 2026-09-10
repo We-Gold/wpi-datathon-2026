@@ -1,0 +1,7 @@
+type,sourceName,sourceVersion,unit,m_creationDate,m_creationTime,m_creationTime_am_pm,m_creationTimeZone,m_startDate,m_startTime,m_startTime_am_pm,m_startTimeZone,m_endDate,m_endTime,m_endTime_am_pm,m_endTimeZone,value,device
+BodyMassIndex,Zepp,202306091108,count,2023-06-20,10:23:33 AM,AM,+0530,2023-06-13,09:25:02 PM,PM,+0530,2023-06-13,09:25:02 PM,PM,+0530,23.8694,
+Height,Person’s iPhone,16.3.1,cm,2023-03-13,07:37:56 PM,PM,+0530,2023-03-13,07:37:56 PM,PM,+0530,2023-03-13,07:37:56 PM,PM,+0530,175,
+SleepAnalysis,Zepp,202305040935,,2023-06-13,09:20:55 PM,PM,+0530,2023-01-27,12:51:00 AM,AM,+0530,2023-01-27,02:14:59 AM,AM,+0530,AsleepCore,
+StepCount,Nickname,1.0,count,2024-01-02,01:00:00 PM,PM,+0530,2024-01-02,12:30:00 PM,PM,+0530,2024-01-02,12:45:00 PM,PM,+0530,412,
+type,sourceName,sourceVersion,unit,m_creationDate,m_creationTime,m_creationTime_am_pm,m_creationTimeZone,m_startDate,m_startTime,m_startTime_am_pm,m_startTimeZone,m_endDate,m_endTime,m_endTime_am_pm,m_endTimeZone,value,device
+HeartRate,Person’s Apple Watch,10.1,count/min,2024-01-02,02:00:00 PM,PM,+0530,2024-01-02,01:59:00 PM,PM,+0530,2024-01-02,01:59:00 PM,PM,+0530,72,

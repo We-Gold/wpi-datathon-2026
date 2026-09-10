@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE HealthData [
+<!ELEMENT HealthData (ExportDate,Me,(Record|Correlation|Workout)*)>
+]>
+<HealthData locale="en_US">
+ <ExportDate value="2025-01-01 12:00:00 -0400"/>
+ <Me HKCharacteristicTypeIdentifierDateOfBirth="1999-01-31" HKCharacteristicTypeIdentifierBiologicalSex="HKBiologicalSexMale" HKCharacteristicTypeIdentifierBloodType="HKBloodTypeNotSet"/>
+ <Record type="HKQuantityTypeIdentifierDietaryWater" sourceName="WaterMinder" sourceVersion="505" unit="mL" creationDate="2020-09-07 06:16:12 -0400" startDate="2017-01-27 16:09:39 -0400" endDate="2017-01-27 16:09:39 -0400" value="236.588">
+  <MetadataEntry key="HKMetadataKeySyncIdentifier" value="B0F3BCEC-B12A-4DB5-89C4-665838D51FAF"/>
+ </Record>
+ <Record type="HKQuantityTypeIdentifierHeartRate" sourceName="Person&#8217;s Apple Watch" sourceVersion="10.1" unit="count/min" creationDate="2024-03-01 09:00:00 -0400" startDate="2024-03-01 08:59:00 -0400" endDate="2024-03-01 08:59:00 -0400" value="72" device="&lt;&lt;HKDevice: 0x8af56c540&gt;, name:Apple Watch, manufacturer:Apple Inc., model:Watch, hardware:Watch3,2, software:5.2.1, creation date:2019-06-18 23:06:02 +0000&gt;"/>
+ <Record type="HKCategoryTypeIdentifierSleepAnalysis" sourceName="Nickname" unit="" creationDate="2024-03-02 09:00:00 -0400" startDate="2024-03-01 23:30:00 -0400" endDate="2024-03-02 01:00:00 -0400" value="HKCategoryValueSleepAnalysisAsleepCore"/>
+ <Record type="HKQuantityTypeIdentifierHeight" sourceName="Withings" unit="ft" creationDate="2025-01-06 05:05:19 -0400" startDate="2025-01-06 05:03:50 -0400" endDate="2025-01-06 05:03:50 -0400" value="5.58071"/>
+ <Correlation type="HKCorrelationTypeIdentifierBloodPressure" sourceName="Health" creationDate="2024-05-01 10:00:00 -0400" startDate="2024-05-01 10:00:00 -0400" endDate="2024-05-01 10:00:00 -0400">
+  <Record type="HKQuantityTypeIdentifierBloodPressureSystolic" sourceName="Health" unit="mmHg" creationDate="2024-05-01 10:00:00 -0400" startDate="2024-05-01 10:00:00 -0400" endDate="2024-05-01 10:00:00 -0400" value="118"/>
+  <Record type="HKQuantityTypeIdentifierBloodPressureDiastolic" sourceName="Health" unit="mmHg" creationDate="2024-05-01 10:00:00 -0400" startDate="2024-05-01 10:00:00 -0400" endDate="2024-05-01 10:00:00 -0400" value="76"/>
+ </Correlation>
+ <Record type="HKQuantityTypeIdentifierBloodPressureSystolic" sourceName="Health" unit="mmHg" creationDate="2024-05-01 10:00:00 -0400" startDate="2024-05-01 10:00:00 -0400" endDate="2024-05-01 10:00:00 -0400" value="118"/>
+ <Record type="HKQuantityTypeIdentifierBloodPressureDiastolic" sourceName="Health" unit="mmHg" creationDate="2024-05-01 10:00:00 -0400" startDate="2024-05-01 10:00:00 -0400" endDate="2024-05-01 10:00:00 -0400" value="76"/>
+ <Workout workoutActivityType="HKWorkoutActivityTypeRunning" duration="30" durationUnit="min" sourceName="Strava" creationDate="2024-06-01 10:00:00 -0400" startDate="2024-06-01 09:30:00 -0400" endDate="2024-06-01 10:00:00 -0400"/>
+</HealthData>

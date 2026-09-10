@@ -1,0 +1,53 @@
+[project]
+name = "health"
+version = "0.1.0"
+description = "Parse Apple Health exports and related formats into one consistent schema."
+requires-python = ">=3.12"
+dependencies = [
+    "polars>=1.17",
+]
+
+[project.scripts]
+health-prep = "health.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "ruff>=0.8",
+    "pyrefly>=0.16",
+]
+notebook = [
+    "altair>=5.4",
+    "marimo>=0.9",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/health"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests", "notebooks"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+# A marimo cell's last expression is its output, which reads as dead code.
+"notebooks/*.py" = ["B018"]
+
+[tool.pyrefly]
+project-includes = ["src", "tests", "notebooks"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.marimo.runtime]
+# Pick up edits to src/health without restarting the kernel.
+auto_reload = "lazy"
+# With --watch, mark cells stale when the file changes underneath the server
+# rather than ignoring the change.
+watcher_on_save = "lazy"
