@@ -22,15 +22,23 @@ OUTPUT_DIR = DATA_DIR / "processed"
 
 
 def find_inputs(data_dir: Path) -> list[Path]:
-    """Every input file, in a stable order so subject numbering is reproducible."""
+    """Every input, in a stable order so subject numbering is reproducible.
+
+    Most inputs are one file. A PMData subject is a directory of files instead,
+    so this returns folders as well, and everything downstream keys on the path
+    either way.
+    """
     paths = [
         path
         for subdir in ("ours", "other")
         for path in sorted((data_dir / subdir).glob("*"))
-        if path.suffix.lower() in pipeline.READERS and path.is_file()
+        if path.is_file() and path.suffix.lower() in pipeline.FORMAT_BY_SUFFIX
     ]
+    paths += [path for path in sorted((data_dir / "pmdata").glob("p[0-9][0-9]")) if path.is_dir()]
     if not paths:
-        raise FileNotFoundError(f"no input files under {data_dir}/ours or {data_dir}/other")
+        raise FileNotFoundError(
+            f"no inputs under {data_dir}/ours, {data_dir}/other or {data_dir}/pmdata"
+        )
     return paths
 
 
@@ -107,7 +115,7 @@ def _parse(args: argparse.Namespace) -> int:
             failed = True
             continue
 
-        destination = args.output_dir / f"{subject_id}_{path.suffix.lstrip('.')}.parquet"
+        destination = args.output_dir / f"{subject_id}_{pipeline.source_format(path)}.parquet"
         frame.write_parquet(destination)
 
         unclassified = sorted({anonymize.normalize(raw) for raw in source_map.unmatched})

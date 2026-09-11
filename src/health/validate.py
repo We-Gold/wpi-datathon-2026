@@ -78,14 +78,14 @@ def _check_metrics(frame: pl.DataFrame) -> list[Finding]:
     unexpected = [
         name
         for name in _distinct_strings(frame, "metric")
-        if not metrics.is_healthkit(name) and name not in metrics.DERIVED_METRICS
+        if not metrics.is_healthkit(name) and name not in metrics.NON_HEALTHKIT_METRICS
     ]
     if unexpected:
         findings.append(
             Finding(
                 "metric",
                 f"names that are neither HealthKit identifiers nor registered "
-                f"derived metrics: {sorted(unexpected)}",
+                f"non-HealthKit metrics: {sorted(unexpected)}",
             )
         )
 

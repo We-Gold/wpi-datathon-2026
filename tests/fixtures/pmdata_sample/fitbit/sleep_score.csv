@@ -1,0 +1,2 @@
+timestamp,sleep_log_entry_id,overall_score,composition_score,revitalization_score,duration_score,deep_sleep_in_minutes,resting_heart_rate,restlessness
+2019-11-02T07:19:30Z,1,76,18,20,38,27,53,0.0536

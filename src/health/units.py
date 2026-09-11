@@ -58,6 +58,10 @@ _CANONICAL: dict[str, tuple[str, float]] = {
     "%": ("fraction", 1.0),
     "fraction": ("fraction", 1.0),
     "count": ("count", 1.0),
+    # A point on a rating scale. Not a count, because the numbers are labels
+    # with an order, and each metric uses its own scale. Do not sum across
+    # metrics.
+    "score": ("score", 1.0),
     # Clinical composites with no SI form anyone would want to read.
     "count/min": ("count/min", 1.0),
     "kcal/hr·kg": ("kcal/hr·kg", 1.0),

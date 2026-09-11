@@ -23,8 +23,13 @@ def _(mo):
     mo.md("""
     # Scratch pad
 
-    Reads whatever `health-prep parse` last wrote to `data/processed/`.
-    Nothing here is part of the pipeline, so break it freely.
+    Reads whatever `health-prep parse` last wrote to `data/processed/`, which is
+    every source together: the Apple exports, the two other formats, and the 16
+    PMData subjects. Nothing here is part of the pipeline, so break it freely.
+
+    PMData brings names HealthKit has no equivalent for, such as `PMSysMood` and
+    `PMSysSessionRPE`. They behave like any other metric here, but only 16 of the 20
+    subjects have them, so a series being empty for someone is normal.
 
     Run `uv run health-prep parse` first if the tables below are empty.
     """)
@@ -39,8 +44,8 @@ def _(OUTPUT_DIR, Path, pl, schema):
     PROCESSED = ROOT / OUTPUT_DIR
 
     parquet_files = sorted(PROCESSED.glob("*.parquet"))
-    # One lazy frame over every output. Scanning keeps the six million rows on
-    # disk until a cell actually asks for something.
+    # One lazy frame over every output. Scanning keeps the thirty-odd million rows
+    # on disk until a cell actually asks for something.
     everything = pl.scan_parquet(parquet_files) if parquet_files else schema.empty_frame().lazy()
     return everything, parquet_files
 
@@ -131,8 +136,8 @@ def _(mo, selection):
 
 @app.cell
 def _(pl, selection):
-    # Daily buckets rather than raw rows: altair chokes well before six million
-    # points, and the shape of a day is what we actually look at. Both
+    # Daily buckets rather than raw rows: altair chokes long before the row counts
+    # here, and the shape of a day is what we actually look at. Both
     # aggregates come out of one pass, so flipping the dropdown does not
     # rescan the parquet.
     daily = (
@@ -207,118 +212,23 @@ def _(mo):
     `StepCount@phone` rather than being reconciled into one number here.
 
     `daily_long` picks one source per day using the trust order below, for when a
-    single number is wanted. The rule for each metric is listed rather than guessed,
-    so a metric nobody has thought about lands in the unhandled list below instead
-    of being quietly summed.
+    single number is wanted. The rule for each metric comes from
+    `health.metrics.CATALOGUE`, so a metric nobody has thought about lands in the
+    unhandled list below instead of being quietly summed.
     """)
     return
 
 
 @app.cell
 def _(metrics):
-    # How each metric collapses into one number per day.
-    #
-    #   sum       cumulative over the day: steps, calories, distance, food
-    #   mean      a level that happens to be sampled many times: heart rate, speed
-    #   duration  category intervals, added up in seconds: sleep stages, mindfulness
-    #   count     category events with no meaningful length: stand hours, alerts
-    #   skip      not a property of a day: height, waist, a goal setting
-    #
-    # Traits like height are dropped rather than carried forward, since a daily
-    # table implies the value was measured that day.
-    _Q = metrics.QUANTITY_PREFIX
-    _C = metrics.CATEGORY_PREFIX
+    # How each metric collapses into one number per day now comes from
+    # health.metrics.CATALOGUE, which also carries the domain and the canonical unit.
+    # It used to be four lists in this cell, where nothing tested it and a new metric
+    # could sit unnoticed for a while.
+    _by_rule = metrics.by_daily_rule()
 
-    DAILY_SUM = [
-        _Q + name
-        for name in (
-            "ActiveEnergyBurned",
-            "BasalEnergyBurned",
-            "AppleExerciseTime",
-            "AppleStandTime",
-            "TimeInDaylight",
-            "StepCount",
-            "FlightsClimbed",
-            "DistanceWalkingRunning",
-            "DistanceCycling",
-            "DistancePaddleSports",
-            "DietaryEnergyConsumed",
-            "DietaryCarbohydrates",
-            "DietaryProtein",
-            "DietaryFatTotal",
-            "DietaryFatSaturated",
-            "DietaryFatMonounsaturated",
-            "DietaryFatPolyunsaturated",
-            "DietaryCholesterol",
-            "DietaryFiber",
-            "DietarySugar",
-            "DietarySodium",
-            "DietaryPotassium",
-            "DietaryCalcium",
-            "DietaryIron",
-            "DietaryVitaminC",
-            "DietaryWater",
-        )
-    ] + [metrics.SLEEP_DURATION_DAILY]
-
-    DAILY_MEAN = [
-        _Q + name
-        for name in (
-            "HeartRate",
-            "RestingHeartRate",
-            "WalkingHeartRateAverage",
-            "HeartRateRecoveryOneMinute",
-            "HeartRateVariabilitySDNN",
-            "RespiratoryRate",
-            "OxygenSaturation",
-            "VO2Max",
-            "PhysicalEffort",
-            "BodyMass",
-            "BodyMassIndex",
-            "BodyFatPercentage",
-            "LeanBodyMass",
-            "WalkingSpeed",
-            "WalkingStepLength",
-            "WalkingAsymmetryPercentage",
-            "WalkingDoubleSupportPercentage",
-            "AppleWalkingSteadiness",
-            "SixMinuteWalkTestDistance",
-            "StairAscentSpeed",
-            "StairDescentSpeed",
-            "RunningSpeed",
-            "RunningPower",
-            "RunningStrideLength",
-            "RunningGroundContactTime",
-            "RunningVerticalOscillation",
-            "CyclingCadence",
-            "CyclingPower",
-            "PaddleSportsSpeed",
-            "EnvironmentalAudioExposure",
-            "HeadphoneAudioExposure",
-        )
-    ]
-
-    DAILY_DURATION = [_C + name for name in ("SleepAnalysis", "MindfulSession")]
-
-    DAILY_COUNT = [
-        _C + name
-        for name in (
-            "AppleStandHour",
-            "AudioExposureEvent",
-            "HeadphoneAudioExposureEvent",
-            "ToothbrushingEvent",
-        )
-    ]
-
-    # A goal setting, and two body measurements that are not about the day.
-    DAILY_SKIP = [_Q + "Height", _Q + "WaistCircumference", "HKDataTypeSleepDurationGoal"]
-
-    DAILY_RULES = {
-        "sum": DAILY_SUM,
-        "mean": DAILY_MEAN,
-        "duration": DAILY_DURATION,
-        "count": DAILY_COUNT,
-    }
+    DAILY_SKIP = _by_rule["skip"]
+    DAILY_RULES = {rule: _by_rule[rule] for rule in ("sum", "mean", "duration", "count")}
     None
     return DAILY_RULES, DAILY_SKIP
 

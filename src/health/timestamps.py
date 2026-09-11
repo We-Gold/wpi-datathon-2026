@@ -3,9 +3,13 @@
     apple_xml    "2017-01-27 16:09:39 -0400"
     flat_csv     "2023-06-13" + "09:25:02 PM" + "+0530"  (separate columns)
     nested_json  "2024-06-09T09:04:10+03:00"
+    pmdata       "2019-11-01 00:00:00"                   (no offset at all)
 
 The naive part is parsed as local time and the instant derived from it, so the
 wall clock is whatever the file literally said.
+
+The first three carry their own offset. PMData does not, so its reader supplies
+one and calls to_utc directly. See health/readers/pmdata.py.
 """
 
 from __future__ import annotations

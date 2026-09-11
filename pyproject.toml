@@ -30,17 +30,26 @@ packages = ["src/health"]
 
 [tool.ruff]
 line-length = 100
+# src still lists notebooks so imports from health resolve as first party there.
 src = ["src", "tests", "notebooks"]
+
+# Notebooks are not linted or formatted. marimo owns these files: it rewrites
+# them on every edit, and the formatter disagrees with how it lays cells out, so
+# the two take turns undoing each other. Nothing here ships, so the cost of
+# leaving them alone is low.
+#
+# force-exclude so that naming a notebook directly, as `ruff check
+# notebooks/explore.py`, is skipped too rather than overriding the exclude.
+exclude = ["notebooks"]
+force-exclude = true
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 
-[tool.ruff.lint.per-file-ignores]
-# A marimo cell's last expression is its output, which reads as dead code.
-"notebooks/*.py" = ["B018"]
-
 [tool.pyrefly]
-project-includes = ["src", "tests", "notebooks"]
+# Notebooks are left out here for the same reason they are left out of ruff.
+# marimo owns those files and nothing in them ships.
+project-includes = ["src", "tests"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
