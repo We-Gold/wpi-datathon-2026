@@ -1,0 +1,16 @@
+[
+  {
+    "dateTime": "2019-11-01 00:00:05",
+    "value": {
+      "bpm": 54,
+      "confidence": 3
+    }
+  },
+  {
+    "dateTime": "2019-11-01 00:00:10",
+    "value": {
+      "bpm": 52,
+      "confidence": 2
+    }
+  }
+]

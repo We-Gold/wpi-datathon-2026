@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import polars as pl
 
-SOURCE_FORMATS = ["apple_xml", "flat_csv", "nested_json"]
+# New formats go on the end. This list is a polars Enum and its order is part
+# of the dtype, so adding one in the middle changes the sort order of the
+# source_format column in every file already written.
+SOURCE_FORMATS = ["apple_xml", "flat_csv", "nested_json", "pmdata"]
 SOURCE_TYPES = ["wearable", "phone", "scale", "app", "manual", "derived", "unknown"]
 
 TIME_UNIT = "us"

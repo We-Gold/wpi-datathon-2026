@@ -1,0 +1,4 @@
+date,timestamp,meals,weight,glasses_of_fluid,alcohol_consumed
+06/11/2019,06/12/2019 21:58:30,"Breakfast, Lunch, Dinner",100,7,No
+07/11/2019,07/12/2019 21:17:02,"Breakfast, Dinner",,6,Yes
+08/11/2019,08/12/2019 20:10:00,Dinner,99,4,Maybe

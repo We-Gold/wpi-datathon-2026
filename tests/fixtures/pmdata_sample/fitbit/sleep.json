@@ -1,0 +1,79 @@
+[
+  {
+    "logId": 1,
+    "dateOfSleep": "2019-11-02",
+    "type": "stages",
+    "startTime": "2019-11-02 00:09:30",
+    "endTime": "2019-11-02T07:19:30.000",
+    "levels": {
+      "summary": {
+        "deep": {
+          "count": 2,
+          "minutes": 36
+        }
+      },
+      "data": [
+        {
+          "dateTime": "2019-11-02T00:09:30.000",
+          "level": "wake",
+          "seconds": 30
+        },
+        {
+          "dateTime": "2019-11-02T00:10:00.000",
+          "level": "light",
+          "seconds": 600
+        },
+        {
+          "dateTime": "2019-11-02T00:20:00.000",
+          "level": "deep",
+          "seconds": 300
+        },
+        {
+          "dateTime": "2019-11-02T00:25:00.000",
+          "level": "rem",
+          "seconds": 120
+        },
+        {
+          "dateTime": "2019-11-02T00:27:00.000",
+          "level": "unknown",
+          "seconds": 60
+        }
+      ],
+      "shortData": [
+        {
+          "dateTime": "2019-11-02T00:15:00.000",
+          "level": "wake",
+          "seconds": 60
+        }
+      ]
+    }
+  },
+  {
+    "logId": 2,
+    "dateOfSleep": "2019-11-03",
+    "type": "classic",
+    "startTime": "2019-11-03 23:00:00",
+    "endTime": "2019-11-04T05:00:00.000",
+    "levels": {
+      "summary": {},
+      "data": [
+        {
+          "dateTime": "2019-11-03T23:00:00.000",
+          "level": "asleep",
+          "seconds": 900
+        },
+        {
+          "dateTime": "2019-11-03T23:15:00.000",
+          "level": "restless",
+          "seconds": 300
+        },
+        {
+          "dateTime": "2019-11-03T23:20:00.000",
+          "level": "awake",
+          "seconds": 60
+        }
+      ],
+      "shortData": []
+    }
+  }
+]
