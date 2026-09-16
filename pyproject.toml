@@ -9,6 +9,7 @@ dependencies = [
 
 [project.scripts]
 health-prep = "health.cli:main"
+health-model = "health.model_cli:main"
 
 [dependency-groups]
 dev = [
@@ -19,6 +20,10 @@ dev = [
 notebook = [
     "altair>=5.4",
     "marimo>=0.9",
+]
+model = [
+    "numpy>=2.0",
+    "scikit-learn>=1.6",
 ]
 
 [build-system]

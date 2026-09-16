@@ -1,0 +1,120 @@
+from __future__ import annotations
+
+import math
+from datetime import date, datetime, timedelta
+
+import polars as pl
+import pytest
+
+from health import metrics
+from health.features import (
+    add_interpretable_axes,
+    build_daily_features,
+    select_dense_windows,
+)
+
+
+def _records(rows: list[dict[str, object]]) -> pl.DataFrame:
+    return pl.DataFrame(rows).with_columns(
+        pl.col("subject_id").cast(pl.Categorical),
+        pl.col("metric").cast(pl.Categorical),
+        pl.col("value_str").cast(pl.Categorical),
+    )
+
+
+def test_build_daily_features_uses_local_day_and_sleep_stages() -> None:
+    start = datetime(2026, 1, 2, 23)
+    rows: list[dict[str, object]] = [
+        {
+            "subject_id": "one",
+            "metric": metrics.QUANTITY_PREFIX + "StepCount",
+            "value_num": 100.0,
+            "value_str": None,
+            "start_local": datetime(2026, 1, 2, 8),
+            "end_local": datetime(2026, 1, 2, 8),
+        },
+        {
+            "subject_id": "one",
+            "metric": metrics.QUANTITY_PREFIX + "StepCount",
+            "value_num": 250.0,
+            "value_str": None,
+            "start_local": datetime(2026, 1, 2, 12),
+            "end_local": datetime(2026, 1, 2, 12),
+        },
+        {
+            "subject_id": "one",
+            "metric": metrics.CATEGORY_PREFIX + "SleepAnalysis",
+            "value_num": None,
+            "value_str": metrics.VALUE_PREFIX + "SleepAnalysisAsleepCore",
+            "start_local": start,
+            "end_local": start + timedelta(hours=6),
+        },
+        {
+            "subject_id": "one",
+            "metric": metrics.CATEGORY_PREFIX + "SleepAnalysis",
+            "value_num": None,
+            "value_str": metrics.VALUE_PREFIX + "SleepAnalysisAwake",
+            "start_local": start + timedelta(hours=6),
+            "end_local": start + timedelta(hours=7),
+        },
+    ]
+    daily = build_daily_features(_records(rows))
+    day = daily.filter(pl.col("date") == date(2026, 1, 2)).row(0, named=True)
+    assert day["steps"] == 350
+    assert day["sleep_hours"] == 6
+    assert day["sleep_efficiency"] == pytest.approx(6 / 7)
+
+
+def test_dense_window_finds_feature_rich_region() -> None:
+    days = pl.date_range(date(2026, 1, 1), date(2026, 1, 12), eager=True)
+    daily = pl.DataFrame(
+        {
+            "subject_id": ["one"] * 12,
+            "date": days,
+            "a": [None, None, 1, 1, 1, 1, 1, 1, 1, None, None, None],
+            "b": [None, None, 1, 1, 1, 1, 1, 1, 1, None, None, None],
+        }
+    ).with_columns(pl.col("subject_id").cast(pl.Categorical))
+    window = select_dense_windows(daily, ("a", "b"), minimum_days=3, minimum_completeness=1.0)[0]
+    assert window.start == date(2026, 1, 3)
+    assert window.end == date(2026, 1, 9)
+    assert window.mean_completeness == 1
+    assert window.meets_threshold
+
+
+def test_dense_heart_rate_gets_bounded_spectral_features() -> None:
+    start = datetime(2026, 1, 2)
+    rows: list[dict[str, object]] = []
+    for index in range(96):
+        timestamp = start + timedelta(minutes=15 * index)
+        rows.append(
+            {
+                "subject_id": "one",
+                "metric": metrics.QUANTITY_PREFIX + "HeartRate",
+                "value_num": 65 + 10 * math.sin(2 * math.pi * index / 96),
+                "value_str": None,
+                "start_local": timestamp,
+                "end_local": timestamp,
+            }
+        )
+    day = build_daily_features(_records(rows)).row(0, named=True)
+    assert 0 <= day["hr_spectral_entropy"] <= 1
+    assert 0 <= day["hr_low_frequency_power"] <= 1
+
+
+def test_axes_are_directional_and_report_coverage() -> None:
+    daily = pl.DataFrame(
+        {
+            "subject_id": ["one"] * 3,
+            "date": pl.date_range(date(2026, 1, 1), date(2026, 1, 3), eager=True),
+            "steps": [1000.0, 2000.0, 3000.0],
+            "sedentary_hours": [10.0, 8.0, 6.0],
+            "sleep_hours": [6.0, 7.0, 8.0],
+            "resting_hr_bpm": [70.0, 65.0, 60.0],
+        }
+    ).with_columns(pl.col("subject_id").cast(pl.Categorical))
+    result = add_interpretable_axes(daily)
+    assert result["activity_score"].to_list() == [-1.0, 0.0, 1.0]
+    assert result["recovery_score"].to_list() == [-1.0, 0.0, 1.0]
+    assert result["activity_coverage"].to_list() == [1.0, 1.0, 1.0]
+    assert result["recovery_coverage"].to_list() == [1.0, 1.0, 1.0]

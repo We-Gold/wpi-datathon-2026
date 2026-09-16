@@ -191,6 +191,25 @@ git.
 go stale rather than rerunning on their own, so click the run button to apply
 them.
 
+## Daily features and embeddings
+
+The first modeling baseline is reproducible from the canonical Parquet files:
+
+```sh
+uv sync --all-groups
+uv run health-model
+```
+
+It chooses a feature-rich interval per subject, builds daily and heart-rate
+spectral features, adds interpretable relative-to-self activity and recovery
+scores, and compares PCA with a small denoising autoencoder on a temporal
+holdout. Outputs go to the gitignored `data/model/` directory.
+
+The feature, missing-value, timeframe, axis, and evaluation decisions are in
+[`docs/embedding-baseline.md`](docs/embedding-baseline.md). Read that before
+interpreting the scores: they describe patterns in these records, not clinical
+health or causal recommendations.
+
 ## Development
 
 ```sh
