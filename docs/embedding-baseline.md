@@ -85,6 +85,16 @@ This writes gitignored artifacts under `data/model/`:
 - `embeddings.parquet`: PCA and autoencoder coordinates; and
 - `evaluation.json`: windows, split, selected features, explained variance, and held-out errors.
 
+After generating the artifacts, open the interactive visual report:
+
+```sh
+uv run marimo edit --watch --no-token notebooks/embeddings.py
+```
+
+It includes PCA/autoencoder trajectories, activity-versus-recovery movement,
+the PCA scree chart and loading heatmap, per-feature held-out errors, and a
+core-feature availability timeline.
+
 The current local four-subject dataset is only a pipeline smoke test. On the
 2026-09-16 run, PCA's first three components explained about 63% of training
 variance. Held-out standardized RMSE was 0.730 for PCA and 0.703 for the

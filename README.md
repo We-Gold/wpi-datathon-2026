@@ -177,11 +177,15 @@ writes only when validation returns nothing.
 ```sh
 uv run marimo edit --watch --no-token notebooks/explore.py
 uv run marimo edit --watch --no-token notebooks/pmdata.py
+uv run marimo edit --watch --no-token notebooks/embeddings.py
 ```
 
 `explore.py` is a scratch pad over `data/processed/`. `pmdata.py` is a survey of
 the PMData dataset on disk, what it holds and how it lines up with the rest, and
 it reads `data/pmdata/` directly rather than the parsed output.
+`embeddings.py` visualizes the artifacts written by `health-model`, including
+the learned trajectories, interpretable axes, coverage, PCA loadings, and
+held-out reconstruction errors.
 
 Both import from `health`, so editing a reader and rerunning a cell picks the
 change up. marimo files store no cell output, so nothing from the data lands in

@@ -65,6 +65,12 @@ def run(input_dir: Path, output_dir: Path) -> dict[str, object]:
         "pca": {
             **pca_metrics,
             "explained_variance_ratio": pca.model.explained_variance_ratio_.tolist(),
+            "loadings": {
+                f"PC{component + 1}": dict(
+                    zip(chosen, weights.tolist(), strict=True)
+                )
+                for component, weights in enumerate(pca.model.components_)
+            },
         },
         "autoencoder": autoencoder_metrics,
     }
