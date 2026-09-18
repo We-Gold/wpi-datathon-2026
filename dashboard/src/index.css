@@ -1,0 +1,607 @@
+/* Light only. The map look depends on a paper colored page. */
+:root {
+	color-scheme: light;
+	--page: #f3efe6;
+	--surface: #fbf9f4;
+	--text-primary: #2b2621;
+	--text-secondary: #5c554c;
+	--text-muted: #8a8278;
+	--grid: #e6e0d4;
+	--baseline: #c9c1b3;
+	--border: rgba(43, 38, 33, 0.12);
+	--ink: #2b2621;
+	/* One color per axis. Checked with the dataviz palette validator. */
+	--activity: #3a8a3f;
+	--recovery: #7d4fc0;
+	/* Neutral data color for the metric cards, so they do not borrow an axis. */
+	--series: #5c554c;
+	--good: #2f6f33;
+	--bad: #b5452f;
+	--font: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+* {
+	box-sizing: border-box;
+}
+
+body {
+	margin: 0;
+	background: var(--page);
+	color: var(--text-primary);
+	font-family: var(--font);
+	font-size: 14px;
+	line-height: 1.4;
+}
+
+.app {
+	max-width: 1440px;
+	margin: 0 auto;
+	padding: 24px 16px 48px;
+}
+
+.app-header {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 12px 16px;
+	margin-bottom: 20px;
+}
+
+h1 {
+	margin: 0;
+	font-size: 22px;
+	font-weight: 600;
+}
+
+h2 {
+	margin: 0;
+	font-size: 18px;
+	font-weight: 600;
+}
+
+h3 {
+	margin: 0;
+	font-size: 15px;
+	font-weight: 600;
+}
+
+.badge {
+	padding: 2px 8px;
+	border: 1px solid var(--border);
+	border-radius: 999px;
+	color: var(--text-secondary);
+	font-size: 12px;
+}
+
+.field {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	color: var(--text-secondary);
+}
+
+.app-header .field {
+	margin-left: auto;
+}
+
+select {
+	font: inherit;
+	color: var(--text-primary);
+	background: var(--surface);
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	padding: 4px 8px;
+}
+
+/* Sections */
+
+.sections {
+	display: grid;
+	grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+	gap: 24px;
+	align-items: start;
+}
+
+@media (max-width: 960px) {
+	.sections {
+		grid-template-columns: minmax(0, 1fr);
+	}
+}
+
+.section {
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+	min-width: 0;
+}
+
+.section-header,
+.subsection-header {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: 8px;
+}
+
+.section-header {
+	padding-bottom: 8px;
+	border-bottom: 1px solid var(--baseline);
+}
+
+.section-date {
+	color: var(--text-secondary);
+}
+
+.subsection-header {
+	align-items: center;
+	margin-top: 8px;
+}
+
+.segmented {
+	display: inline-flex;
+	margin: 0;
+	padding: 2px;
+	border: 1px solid var(--border);
+	border-radius: 8px;
+	background: var(--surface);
+}
+
+.segmented label {
+	padding: 4px 10px;
+	border-radius: 6px;
+	color: var(--text-secondary);
+	cursor: pointer;
+}
+
+.segmented label.active {
+	background: var(--grid);
+	color: var(--text-primary);
+}
+
+.segmented label:has(input:focus-visible) {
+	outline: 2px solid var(--ink);
+}
+
+.segmented input {
+	position: absolute;
+	opacity: 0;
+	pointer-events: none;
+}
+
+.card-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr));
+	gap: 16px;
+}
+
+.card-grid-narrow {
+	grid-template-columns: minmax(0, 1fr);
+}
+
+@media (max-width: 960px) {
+	.card-grid-narrow {
+		grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr));
+	}
+}
+
+/* Cards */
+
+.card {
+	min-width: 0;
+	padding: 16px;
+	background: var(--surface);
+	border: 1px solid var(--border);
+	border-radius: 12px;
+}
+
+.card-header {
+	display: flex;
+	justify-content: space-between;
+	align-items: flex-start;
+	gap: 12px;
+	margin-bottom: 8px;
+}
+
+.card-subtitle {
+	margin: 2px 0 0;
+	color: var(--text-muted);
+	font-size: 12px;
+}
+
+.headline {
+	display: grid;
+	grid-template-columns: auto auto;
+	justify-items: end;
+	align-items: baseline;
+	column-gap: 4px;
+	text-align: right;
+}
+
+.headline-value {
+	font-size: 22px;
+	font-weight: 600;
+}
+
+.headline-unit {
+	color: var(--text-secondary);
+}
+
+.delta {
+	grid-column: 1 / -1;
+	font-size: 12px;
+	color: var(--text-secondary);
+}
+
+.delta-good {
+	color: var(--good);
+}
+
+.delta-bad {
+	color: var(--bad);
+}
+
+/* Shared chart parts */
+
+.chart {
+	position: relative;
+}
+
+.chart svg {
+	display: block;
+	overflow: visible;
+}
+
+.gridline {
+	stroke: var(--grid);
+}
+
+.baseline {
+	stroke: var(--baseline);
+}
+
+.tick {
+	fill: var(--text-muted);
+	font-size: 11px;
+	font-variant-numeric: tabular-nums;
+}
+
+.axis-title {
+	fill: var(--text-secondary);
+	font-size: 12px;
+	font-weight: 500;
+}
+
+.axis-key {
+	font-size: 10px;
+}
+
+.axis-key-activity {
+	fill: var(--activity);
+	color: var(--activity);
+}
+
+.axis-key-recovery {
+	fill: var(--recovery);
+	color: var(--recovery);
+}
+
+.value-label {
+	fill: var(--text-primary);
+	font-size: 11px;
+	font-variant-numeric: tabular-nums;
+}
+
+.hit-area {
+	fill: transparent;
+	cursor: crosshair;
+}
+
+.arrow-head {
+	fill: var(--ink);
+}
+
+.velocity-arrow {
+	stroke: var(--ink);
+	stroke-width: 2;
+	stroke-linecap: round;
+}
+
+.tooltip {
+	position: absolute;
+	z-index: 1;
+	pointer-events: none;
+	min-width: 150px;
+	padding: 8px 10px;
+	background: var(--surface);
+	border: 1px solid var(--border);
+	border-radius: 8px;
+	box-shadow: 0 4px 16px rgba(43, 38, 33, 0.14);
+	font-size: 12px;
+	white-space: nowrap;
+}
+
+.tooltip-date {
+	margin-bottom: 4px;
+	color: var(--text-secondary);
+}
+
+.tooltip-row {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+}
+
+.tooltip-row strong {
+	margin-left: auto;
+	padding-left: 12px;
+	font-variant-numeric: tabular-nums;
+}
+
+/* Terrain map */
+
+.contour {
+	stroke: rgba(92, 70, 48, 0.28);
+	stroke-width: 0.75;
+}
+
+.frame {
+	fill: none;
+	stroke: var(--border);
+}
+
+.trail {
+	stroke: var(--ink);
+	stroke-width: 2;
+	stroke-linecap: round;
+}
+
+.legend-trail {
+	color: var(--ink);
+}
+
+.prediction {
+	fill: none;
+	stroke: var(--ink);
+	stroke-width: 2;
+	stroke-linecap: round;
+	stroke-dasharray: 0.1 5;
+}
+
+.prediction-end {
+	fill: var(--surface);
+	stroke: var(--ink);
+	stroke-width: 1.5;
+}
+
+.today-dot {
+	fill: var(--ink);
+	stroke: var(--surface);
+	stroke-width: 2;
+}
+
+.today-ring {
+	fill: none;
+	stroke: var(--ink);
+	stroke-width: 1.5;
+}
+
+.hover-dot {
+	fill: var(--surface);
+	stroke: var(--ink);
+	stroke-width: 2;
+}
+
+.map-legend {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px 20px;
+	margin: 12px 0 0;
+	padding: 0;
+	list-style: none;
+	color: var(--text-secondary);
+	font-size: 12px;
+}
+
+.map-legend li {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.map-legend li:first-child {
+	flex-direction: column;
+	align-items: stretch;
+	gap: 2px;
+	min-width: 180px;
+}
+
+.legend-ramp {
+	display: block;
+	height: 8px;
+	border-radius: 4px;
+	border: 1px solid var(--border);
+}
+
+.legend-ramp-labels {
+	display: flex;
+	justify-content: space-between;
+	gap: 12px;
+}
+
+/* Daily velocity */
+
+.velocity-plot {
+	display: flex;
+	justify-content: center;
+}
+
+.projection {
+	stroke: var(--baseline);
+	stroke-dasharray: 3 3;
+}
+
+.leg {
+	stroke-width: 4;
+	stroke-linecap: round;
+}
+
+.leg-activity {
+	stroke: var(--activity);
+}
+
+.leg-recovery {
+	stroke: var(--recovery);
+}
+
+.origin-dot {
+	fill: var(--ink);
+	stroke: var(--surface);
+	stroke-width: 2;
+}
+
+.contributions {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	margin-top: 12px;
+}
+
+.contribution-group {
+	margin: 0;
+}
+
+.contribution-group figcaption {
+	margin-bottom: 4px;
+	color: var(--text-secondary);
+	font-size: 12px;
+	font-weight: 500;
+}
+
+.contribution-group figcaption .axis-key {
+	font-size: 10px;
+}
+
+.contribution-group svg {
+	display: block;
+}
+
+.row-label {
+	fill: var(--text-secondary);
+	font-size: 12px;
+}
+
+.row-total {
+	font-weight: 600;
+	fill: var(--text-primary);
+}
+
+.divider {
+	stroke: var(--grid);
+}
+
+.bar-activity {
+	fill: var(--activity);
+}
+
+.bar-recovery {
+	fill: var(--recovery);
+}
+
+/* Metric cards */
+
+.line-daily,
+.line-smoothed {
+	fill: none;
+	stroke: var(--series);
+	stroke-width: 2;
+	stroke-linejoin: round;
+	stroke-linecap: round;
+}
+
+.line-daily {
+	stroke-opacity: 0.25;
+}
+
+.end-dot {
+	fill: var(--series);
+	stroke: var(--surface);
+	stroke-width: 2;
+}
+
+.crosshair {
+	stroke: var(--baseline);
+}
+
+.column {
+	fill: var(--series);
+	fill-opacity: 0.3;
+}
+
+.column-today {
+	fill-opacity: 1;
+}
+
+.level-dot {
+	fill: var(--series);
+	fill-opacity: 0.35;
+	stroke: var(--surface);
+	stroke-width: 2;
+}
+
+.level-dot-today {
+	fill-opacity: 1;
+}
+
+.swatch {
+	display: inline-block;
+	width: 14px;
+	height: 2px;
+	margin-right: 4px;
+	vertical-align: middle;
+	border-radius: 1px;
+	background: var(--series);
+}
+
+.swatch-faint {
+	opacity: 0.3;
+}
+
+.table-view {
+	margin-top: 8px;
+	color: var(--text-secondary);
+	font-size: 12px;
+}
+
+.table-view summary {
+	cursor: pointer;
+}
+
+.table-view table {
+	display: block;
+	max-height: 200px;
+	overflow-y: auto;
+	margin-top: 8px;
+	border-collapse: collapse;
+	font-variant-numeric: tabular-nums;
+}
+
+.table-view th,
+.table-view td {
+	padding: 2px 16px 2px 0;
+	text-align: left;
+}
+
+.empty {
+	color: var(--text-muted);
+}
+
+.visually-hidden {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	overflow: hidden;
+	clip-path: inset(50%);
+	white-space: nowrap;
+}

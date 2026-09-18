@@ -1,5 +1,5 @@
 # Raw and processed health data. Never commit: contains identifying records.
-data/
+/data/
 
 # Local, uncommitted identifier mappings. See README.
 subjects.toml
