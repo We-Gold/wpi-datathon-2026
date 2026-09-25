@@ -177,11 +177,15 @@ writes only when validation returns nothing.
 ```sh
 uv run marimo edit --watch --no-token notebooks/explore.py
 uv run marimo edit --watch --no-token notebooks/pmdata.py
+uv run marimo edit --watch --no-token notebooks/embeddings.py
 ```
 
 `explore.py` is a scratch pad over `data/processed/`. `pmdata.py` is a survey of
 the PMData dataset on disk, what it holds and how it lines up with the rest, and
 it reads `data/pmdata/` directly rather than the parsed output.
+`embeddings.py` visualizes the artifacts written by `health-model`, including
+the learned trajectories, interpretable axes, coverage, PCA loadings, and
+held-out reconstruction errors.
 
 Both import from `health`, so editing a reader and rerunning a cell picks the
 change up. marimo files store no cell output, so nothing from the data lands in
@@ -190,6 +194,25 @@ git.
 `--watch` picks up edits to the notebook file made outside the browser. Cells
 go stale rather than rerunning on their own, so click the run button to apply
 them.
+
+## Daily features and embeddings
+
+The first modeling baseline is reproducible from the canonical Parquet files:
+
+```sh
+uv sync --all-groups
+uv run health-model
+```
+
+It chooses a feature-rich interval per subject, builds daily and heart-rate
+spectral features, adds interpretable relative-to-self activity and recovery
+scores, and compares PCA with a small denoising autoencoder on a temporal
+holdout. Outputs go to the gitignored `data/model/` directory.
+
+The feature, missing-value, timeframe, axis, and evaluation decisions are in
+[`docs/embedding-baseline.md`](docs/embedding-baseline.md). Read that before
+interpreting the scores: they describe patterns in these records, not clinical
+health or causal recommendations.
 
 ## Development
 
