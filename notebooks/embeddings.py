@@ -101,19 +101,20 @@ def _(combined, mo):
 
 
 @app.cell
-def _(combined, history_pick, pl, smoothing_pick, subject_pick):
+def _(combined, history_pick, model_pick, pl, smoothing_pick, subject_pick):
     if combined.height and subject_pick.value is not None:
         subject_view = combined.filter(
             pl.col("subject_id").cast(pl.String) == subject_pick.value
         ).sort("date")
         smoothing_days = smoothing_pick.value
+        prefix = model_pick.value
+        coordinate_columns = [
+            name
+            for name in ("pc_1", "pc_2", "ae_1", "ae_2", "umap_1", "umap_2", "tsne_1", "tsne_2")
+            if name in subject_view.columns
+        ]
         if smoothing_days > 1:
             minimum = 3 if smoothing_days == 7 else 7
-            coordinate_columns = [
-                name
-                for name in ("pc_1", "pc_2", "ae_1", "ae_2")
-                if name in subject_view.columns
-            ]
             subject_view = subject_view.with_columns(
                 *(
                     pl.col(name)
@@ -127,6 +128,12 @@ def _(combined, history_pick, pl, smoothing_pick, subject_pick):
                 if smoothed in subject_view.columns:
                     subject_view = subject_view.with_columns(pl.col(smoothed).alias(axis))
         subject_view = subject_view.tail(history_pick.value)
+        x_name, y_name = f"{prefix}_1", f"{prefix}_2"
+        if x_name in subject_view.columns and y_name in subject_view.columns:
+            subject_view = subject_view.with_columns(
+                pl.col(x_name).alias("embedding_x"),
+                pl.col(y_name).alias("embedding_y"),
+            )
     else:
         subject_view = combined
         smoothing_days = smoothing_pick.value
@@ -135,25 +142,22 @@ def _(combined, history_pick, pl, smoothing_pick, subject_pick):
 
 @app.cell
 def _(alt, mo, model_pick, smoothing_days, subject_view):
-    prefix = model_pick.value
-    x_name = f"{prefix}_1"
-    y_name = f"{prefix}_2"
-    if subject_view.height and x_name in subject_view.columns and y_name in subject_view.columns:
+    if subject_view.height and "embedding_x" in subject_view.columns:
         trajectory_line = (
             alt.Chart(subject_view)
             .mark_line(opacity=0.35)
-            .encode(x=alt.X(f"{x_name}:Q", title=f"{model_pick.selected_key} dimension 1"),
-                    y=alt.Y(f"{y_name}:Q", title=f"{model_pick.selected_key} dimension 2"),
+            .encode(x=alt.X("embedding_x:Q", title=f"{model_pick.selected_key} dimension 1"),
+                    y=alt.Y("embedding_y:Q", title=f"{model_pick.selected_key} dimension 2"),
                     order="date:T")
         )
         trajectory_points = (
             alt.Chart(subject_view)
             .mark_circle(size=45)
             .encode(
-                x=f"{x_name}:Q",
-                y=f"{y_name}:Q",
+                x="embedding_x:Q",
+                y="embedding_y:Q",
                 color=alt.Color("date:T", title="Date", scale=alt.Scale(scheme="viridis")),
-                tooltip=["subject_id:N", "date:T", f"{x_name}:Q", f"{y_name}:Q"],
+                tooltip=["subject_id:N", "date:T", "embedding_x:Q", "embedding_y:Q"],
             )
         )
         _smoothing_label = "raw daily" if smoothing_days == 1 else f"{smoothing_days}-day mean"
