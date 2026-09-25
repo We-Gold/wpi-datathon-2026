@@ -33,6 +33,17 @@ class Feature:
     scale: float = 1.0
 
 
+@dataclass(frozen=True)
+class AxisFeature:
+    """A documented, direction-aligned ingredient of an interpretable axis."""
+
+    name: str
+    axis: str
+    direction: float
+    role: str
+    outcome_only: bool = False
+
+
 # The shared signals available in Apple Health, PMData/Fitbit and the supplied
 # exports. Availability still varies by day; this is a common vocabulary, not
 # a claim that every row contains all three values.
@@ -69,6 +80,8 @@ MODEL_FEATURES: tuple[str, ...] = (
     "hr_std_bpm",
     "hr_range_bpm",
     "hr_p10_bpm",
+    "hr_active_mean_bpm",
+    "hr_active_excess_bpm",
     "hr_daily_cv",
     "hr_spectral_entropy",
     "hr_low_frequency_power",
@@ -82,6 +95,7 @@ SMOOTH_FEATURES: tuple[str, ...] = (
     "sleep_hours",
     "hr_mean_bpm",
     "hr_p10_bpm",
+    "hr_active_excess_bpm",
     "resting_hr_bpm",
     "activity_score",
     "recovery_score",
@@ -201,30 +215,42 @@ def _heart_rate_features(records: pl.DataFrame, bins: int = 96) -> pl.DataFrame:
                 "hr_range_bpm": pl.Float64,
                 "hr_samples": pl.UInt32,
                 "hr_p10_bpm": pl.Float64,
+                "hr_active_mean_bpm": pl.Float64,
+                "hr_active_excess_bpm": pl.Float64,
                 "hr_daily_cv": pl.Float64,
                 "hr_spectral_entropy": pl.Float64,
                 "hr_low_frequency_power": pl.Float64,
             }
         )
 
-    summaries = (
-        hr.group_by("subject_id", "date")
-        .agg(
-            pl.col("value_num").mean().alias("hr_mean_bpm"),
-            pl.col("value_num").std().alias("hr_std_bpm"),
-            (pl.col("value_num").max() - pl.col("value_num").min()).alias("hr_range_bpm"),
-            pl.len().alias("hr_samples"),
-            pl.when(pl.len() >= 10)
-            .then(pl.col("value_num").quantile(0.1, interpolation="linear"))
-            .otherwise(None)
-            .alias("hr_p10_bpm"),
-        )
-        .with_columns(
-            pl.when((pl.col("hr_samples") >= 10) & (pl.col("hr_mean_bpm") > 0))
-            .then(pl.col("hr_std_bpm") / pl.col("hr_mean_bpm"))
-            .otherwise(None)
-            .alias("hr_daily_cv")
-        )
+    summaries = hr.group_by("subject_id", "date").agg(
+        pl.col("value_num").mean().alias("hr_mean_bpm"),
+        pl.col("value_num").std().alias("hr_std_bpm"),
+        (pl.col("value_num").max() - pl.col("value_num").min()).alias("hr_range_bpm"),
+        pl.len().alias("hr_samples"),
+        pl.when(pl.len() >= 10)
+        .then(pl.col("value_num").quantile(0.1, interpolation="linear"))
+        .otherwise(None)
+        .alias("hr_p10_bpm"),
+    )
+    thresholds = hr.group_by("subject_id", "date").agg(
+        pl.when(pl.len() >= 10)
+        .then(pl.col("value_num").quantile(0.75, interpolation="linear"))
+        .otherwise(None)
+        .alias("hr_p75_bpm")
+    )
+    active_means = (
+        hr.join(thresholds, on=["subject_id", "date"])
+        .filter(pl.col("hr_p75_bpm").is_not_null() & (pl.col("value_num") >= pl.col("hr_p75_bpm")))
+        .group_by("subject_id", "date")
+        .agg(pl.col("value_num").mean().alias("hr_active_mean_bpm"))
+    )
+    summaries = summaries.join(active_means, on=["subject_id", "date"], how="left").with_columns(
+        (pl.col("hr_active_mean_bpm") - pl.col("hr_p10_bpm")).alias("hr_active_excess_bpm"),
+        pl.when((pl.col("hr_samples") >= 10) & (pl.col("hr_mean_bpm") > 0))
+        .then(pl.col("hr_std_bpm") / pl.col("hr_mean_bpm"))
+        .otherwise(None)
+        .alias("hr_daily_cv"),
     )
     spectral_rows: list[dict[str, object]] = []
     for group in hr.select("subject_id", "date", "start_local", "value_num").partition_by(
@@ -375,6 +401,7 @@ AXIS_FEATURES: dict[str, dict[str, float]] = {
         "active_energy_kcal": 1,
         "light_activity_hours": 1,
         "sedentary_hours": -1,
+        "hr_active_excess_bpm": 1,
     },
     "recovery": {
         "sleep_hours": 1,
@@ -383,9 +410,31 @@ AXIS_FEATURES: dict[str, dict[str, float]] = {
         "sleep_score": 1,
         "sleep_restlessness": -1,
         "resting_hr_bpm": -1,
+        "resting_hr_change_bpm": -1,
+        "hr_active_excess_bpm": -1,
         "respiratory_rate": -1,
     },
 }
+
+AXIS_FEATURE_SPECS: tuple[AxisFeature, ...] = (
+    AxisFeature("steps", "activity", 1, "movement volume"),
+    AxisFeature("distance_m", "activity", 1, "movement volume"),
+    AxisFeature("exercise_minutes", "activity", 1, "structured exercise"),
+    AxisFeature("active_energy_kcal", "activity", 1, "energy expenditure"),
+    AxisFeature("light_activity_hours", "activity", 1, "low-intensity movement"),
+    AxisFeature("sedentary_hours", "activity", -1, "inactivity"),
+    AxisFeature("hr_active_excess_bpm", "activity", 1, "active HR above resting proxy"),
+    AxisFeature("sleep_hours", "recovery", 1, "sleep opportunity"),
+    AxisFeature("sleep_efficiency", "recovery", 1, "sleep quality"),
+    AxisFeature("hrv_sdnn_ms", "recovery", 1, "native HRV", outcome_only=False),
+    AxisFeature("sleep_score", "recovery", 1, "device sleep score"),
+    AxisFeature("sleep_restlessness", "recovery", -1, "sleep disruption"),
+    AxisFeature("resting_hr_bpm", "recovery", -1, "resting physiology"),
+    AxisFeature("resting_hr_change_bpm", "recovery", -1, "resting HR above baseline"),
+    AxisFeature("hr_active_excess_bpm", "recovery", -1, "same-day cardiac load"),
+    AxisFeature("respiratory_rate", "recovery", -1, "respiratory strain"),
+    AxisFeature("readiness", "recovery", 1, "self-report outcome", outcome_only=True),
+)
 
 
 def add_interpretable_axes(daily: pl.DataFrame) -> pl.DataFrame:

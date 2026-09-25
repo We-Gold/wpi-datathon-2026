@@ -97,6 +97,30 @@ uv sync --all-groups
 uv run health-model
 ```
 
+## Time-series prediction baseline
+
+The forecasting scaffold turns the daily activity/recovery axes into an
+honest next-day prediction task:
+
+```bash
+uv run health-forecast
+```
+
+It writes `forecast_predictions.parquet` and `forecast_evaluation.json` to
+`data/model/`. Missing calendar days are inserted as nulls per subject, and
+features are represented by causal lags (0, 1, 2, 3, 7, 14 and 28 days). The
+holdout is the latest 20% of each subject's timeline, so future labels cannot
+leak into training. Persistence, a short rolling mean and Ridge regression are
+reported for both `activity_score` and `recovery_score`.
+
+The active-heart-rate feature is a transparent proxy: samples above each
+subject's daily 75th percentile are treated as active, while resting heart
+rate and HRV remain separate recovery signals. This is a baseline contract for
+the dashboard, not yet an action-conditioned causal model. The next model
+should add intervention features (for example, planned steps or sleep target),
+rolling-origin evaluation, and uncertainty intervals before replacing these
+baselines with a GRU or transformer.
+
 This writes gitignored artifacts under `data/model/`:
 
 - `daily_features.parquet`: selected daily rows, missingness, axis values and coverage;

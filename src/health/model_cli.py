@@ -37,7 +37,9 @@ def run(input_dir: Path, output_dir: Path) -> dict[str, object]:
     records = pl.concat([pl.read_parquet(path) for path in paths], how="vertical_relaxed")
     daily = build_daily_features(records)
     windows = select_dense_windows(daily, CORE_FEATURES)
-    selected = add_smoothed_features(add_interpretable_axes(apply_windows(daily, windows)))
+    selected = add_smoothed_features(apply_windows(daily, windows))
+    selected = add_interpretable_axes(selected)
+    selected = add_smoothed_features(selected, ("activity_score", "recovery_score"))
     train, test = temporal_split(selected)
     chosen = select_features(train, MODEL_FEATURES)
 

@@ -204,6 +204,13 @@ uv sync --all-groups
 uv run health-model
 ```
 
+To run the leakage-safe next-day activity/recovery baselines (persistence,
+rolling mean, and Ridge) and write predictions plus metrics, use:
+
+```bash
+uv run health-forecast
+```
+
 It chooses a feature-rich interval per subject, builds daily and heart-rate
 spectral features, adds interpretable relative-to-self activity and recovery
 scores, and compares PCA with a small denoising autoencoder on a temporal
