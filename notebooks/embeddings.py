@@ -204,10 +204,22 @@ def _(alt, mo, model_pick, smoothing_days, subject_view):
 
 @app.cell
 def _(alt, mo, pl, series_pick, smoothing_days, subject_view):
+    series_units = {
+        "steps": "count",
+        "sleep_hours": "hours",
+        "hr_mean_bpm": "bpm",
+        "resting_hr_bpm": "bpm",
+        "resting_hr_change_bpm": "bpm change",
+        "hr_p10_change_bpm": "bpm change",
+        "activity_score": "relative IQR units",
+        "recovery_score": "relative IQR units",
+    }
     series_name = series_pick.value
     smoothed_name = f"{series_name}_{smoothing_days}d"
     value_name = smoothed_name if smoothing_days > 1 and smoothed_name in subject_view.columns else series_name
     if subject_view.height and value_name in subject_view.columns:
+        series_label = series_pick.selected_key
+        series_unit = series_units.get(series_name, "canonical units")
         series_data = subject_view.select(
             "date", "subject_id", pl.col(value_name).alias("series_value")
         ).drop_nulls("series_value")
@@ -216,8 +228,11 @@ def _(alt, mo, pl, series_pick, smoothing_days, subject_view):
             .mark_line(point=True)
             .encode(
                 x=alt.X("date:T", title="Date"),
-                y=alt.Y("series_value:Q", title=series_pick.selected_key),
-                tooltip=["date:T", alt.Tooltip("series_value:Q", format=".3f")],
+                y=alt.Y("series_value:Q", title=f"{series_label} ({series_unit})"),
+                tooltip=[
+                    "date:T",
+                    alt.Tooltip("series_value:Q", title=f"{series_label} ({series_unit})", format=".3f"),
+                ],
             )
             .properties(
                 title=f"{series_pick.selected_key} over time",
