@@ -13,6 +13,8 @@ from health.embeddings import (
     DenoisingAutoencoder,
     PCAEmbedding,
     embedding_frame,
+    fit_tsne,
+    fit_umap,
     reconstruction_metrics,
     select_features,
     temporal_split,
@@ -50,7 +52,11 @@ def run(input_dir: Path, output_dir: Path) -> dict[str, object]:
     selected.write_parquet(output_dir / "daily_features.parquet")
     pca_rows = embedding_frame(selected, pca.transform(selected), "pc")
     neural_rows = embedding_frame(selected, autoencoder.transform(selected), "ae")
-    pca_rows.join(neural_rows, on=["subject_id", "date"]).write_parquet(
+    umap_rows = embedding_frame(selected, fit_umap(selected, chosen), "umap")
+    tsne_rows = embedding_frame(selected, fit_tsne(selected, chosen), "tsne")
+    embeddings = pca_rows.join(neural_rows, on=["subject_id", "date"])
+    embeddings = embeddings.join(umap_rows, on=["subject_id", "date"])
+    embeddings.join(tsne_rows, on=["subject_id", "date"]).write_parquet(
         output_dir / "embeddings.parquet"
     )
     report: dict[str, object] = {
@@ -72,6 +78,14 @@ def run(input_dir: Path, output_dir: Path) -> dict[str, object]:
             },
         },
         "autoencoder": autoencoder_metrics,
+        "visualizations": {
+            "umap": {"neighbors": 15, "min_dist": 0.1, "random_state": 0},
+            "tsne": {"perplexity": 30, "random_state": 0},
+            "warning": (
+                "UMAP and t-SNE are exploratory projections fit on all selected days; "
+                "do not use them for held-out evaluation."
+            ),
+        },
     }
     (output_dir / "evaluation.json").write_text(json.dumps(report, indent=2, default=str) + "\n")
     return report

@@ -15,6 +15,7 @@ clinical recovery.
 | Feature-rich periods | For each subject, find the longest interval whose trailing 30-day windows average at least 60% completeness over the core set. If no interval qualifies, retain the best 30-day diagnostic window and mark `meets_threshold=false`; do not silently drop that subject. |
 | PCA evaluation | Hold out the latest 20% of each subject's selected interval. Fit feature selection, imputation, scaling, and PCA on earlier days only. Report explained variance plus held-out RMSE/MAE on observed cells, overall and per feature. |
 | Neural embedding | Compare PCA to a small denoising autoencoder with the same temporal split and observed-cell metrics. It receives the missingness mask and randomly masks observed inputs during training. It is a feasibility benchmark, not the final model. |
+| Exploratory projections | Add UMAP and t-SNE to the visualization artifact for cluster inspection. Fit them on the selected visualization period only; do not interpret their global distances or use them for held-out prediction metrics. |
 | Interpretable axes | Activity and recovery are predefined composites of direction-aligned, per-person robust z-scores. They are kept separate from learned embeddings so their meaning does not rotate when a model is refit. |
 
 ## Activity and recovery axes
@@ -108,10 +109,11 @@ After generating the artifacts, open the interactive visual report:
 uv run marimo edit --watch --no-token notebooks/embeddings.py
 ```
 
-It includes raw, 7-day, or 28-day PCA/autoencoder trajectories,
+It includes raw, 7-day, or 28-day PCA, autoencoder, UMAP, and t-SNE trajectories,
 activity-versus-recovery movement,
 the PCA scree chart and loading heatmap, per-feature held-out errors, and a
-core-feature availability timeline.
+core-feature availability timeline. The embedding picker also includes UMAP
+and t-SNE for exploratory cluster inspection.
 
 The current local four-subject dataset is only a pipeline smoke test. On the
 2026-09-16 run with the shared steps/sleep/HR window, all four subjects met the

@@ -24,6 +24,7 @@ notebook = [
 model = [
     "numpy>=2.0",
     "scikit-learn>=1.6",
+    "umap-learn>=0.5.7",
 ]
 
 [build-system]

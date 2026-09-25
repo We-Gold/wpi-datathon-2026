@@ -55,7 +55,7 @@ def _(Path, json, pl):
         embedding = pl.DataFrame()
         combined = daily
         report = {}
-    return MODEL_DIR, artifacts_exist, combined, daily, report
+    return MODEL_DIR, artifacts_exist, combined, report
 
 
 @app.cell
@@ -77,7 +77,9 @@ def _(combined, mo):
         label="Subject",
     )
     model_pick = mo.ui.dropdown(
-        {"PCA": "pc", "Autoencoder": "ae"}, value="PCA", label="Embedding"
+        {"PCA": "pc", "Autoencoder": "ae", "UMAP": "umap", "t-SNE": "tsne"},
+        value="PCA",
+        label="Embedding",
     )
     history_pick = mo.ui.slider(
         start=30,
