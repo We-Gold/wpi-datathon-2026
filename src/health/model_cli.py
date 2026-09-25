@@ -21,6 +21,7 @@ from health.features import (
     CORE_FEATURES,
     MODEL_FEATURES,
     add_interpretable_axes,
+    add_smoothed_features,
     apply_windows,
     build_daily_features,
     select_dense_windows,
@@ -34,7 +35,7 @@ def run(input_dir: Path, output_dir: Path) -> dict[str, object]:
     records = pl.concat([pl.read_parquet(path) for path in paths], how="vertical_relaxed")
     daily = build_daily_features(records)
     windows = select_dense_windows(daily, CORE_FEATURES)
-    selected = add_interpretable_axes(apply_windows(daily, windows))
+    selected = add_smoothed_features(add_interpretable_axes(apply_windows(daily, windows)))
     train, test = temporal_split(selected)
     chosen = select_features(train, MODEL_FEATURES)
 
@@ -66,9 +67,7 @@ def run(input_dir: Path, output_dir: Path) -> dict[str, object]:
             **pca_metrics,
             "explained_variance_ratio": pca.model.explained_variance_ratio_.tolist(),
             "loadings": {
-                f"PC{component + 1}": dict(
-                    zip(chosen, weights.tolist(), strict=True)
-                )
+                f"PC{component + 1}": dict(zip(chosen, weights.tolist(), strict=True))
                 for component, weights in enumerate(pca.model.components_)
             },
         },

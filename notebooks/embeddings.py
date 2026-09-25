@@ -87,25 +87,52 @@ def _(combined, mo):
         label="Latest days",
         show_value=True,
     )
-    mo.hstack([subject_pick, model_pick, history_pick], justify="start", gap=2)
-    return history_pick, model_pick, subject_pick
+    smoothing_pick = mo.ui.dropdown(
+        {"Raw daily": 1, "7-day mean": 7, "28-day mean": 28},
+        value="7-day mean",
+        label="Smoothing",
+    )
+    mo.hstack(
+        [subject_pick, model_pick, smoothing_pick, history_pick], justify="start", gap=2
+    )
+    return history_pick, model_pick, smoothing_pick, subject_pick
 
 
 @app.cell
-def _(combined, history_pick, pl, subject_pick):
+def _(combined, history_pick, pl, smoothing_pick, subject_pick):
     if combined.height and subject_pick.value is not None:
-        subject_view = (
-            combined.filter(pl.col("subject_id").cast(pl.String) == subject_pick.value)
-            .sort("date")
-            .tail(history_pick.value)
-        )
+        subject_view = combined.filter(
+            pl.col("subject_id").cast(pl.String) == subject_pick.value
+        ).sort("date")
+        smoothing_days = smoothing_pick.value
+        if smoothing_days > 1:
+            minimum = 3 if smoothing_days == 7 else 7
+            coordinate_columns = [
+                name
+                for name in ("pc_1", "pc_2", "ae_1", "ae_2")
+                if name in subject_view.columns
+            ]
+            subject_view = subject_view.with_columns(
+                *(
+                    pl.col(name)
+                    .rolling_mean_by("date", f"{smoothing_days}d", min_samples=minimum)
+                    .alias(name)
+                    for name in coordinate_columns
+                )
+            )
+            for axis in ("activity_score", "recovery_score"):
+                smoothed = f"{axis}_{smoothing_days}d"
+                if smoothed in subject_view.columns:
+                    subject_view = subject_view.with_columns(pl.col(smoothed).alias(axis))
+        subject_view = subject_view.tail(history_pick.value)
     else:
         subject_view = combined
-    return (subject_view,)
+        smoothing_days = smoothing_pick.value
+    return smoothing_days, subject_view
 
 
 @app.cell
-def _(alt, mo, model_pick, subject_view):
+def _(alt, mo, model_pick, smoothing_days, subject_view):
     prefix = model_pick.value
     x_name = f"{prefix}_1"
     y_name = f"{prefix}_2"
@@ -127,9 +154,14 @@ def _(alt, mo, model_pick, subject_view):
                 tooltip=["subject_id:N", "date:T", f"{x_name}:Q", f"{y_name}:Q"],
             )
         )
-        embedding_chart = (trajectory_line + trajectory_points).properties(
-            title=f"{model_pick.selected_key} trajectory", height=340
-        ).interactive()
+        _smoothing_label = "raw daily" if smoothing_days == 1 else f"{smoothing_days}-day mean"
+        embedding_chart = (
+            (trajectory_line + trajectory_points)
+            .properties(
+                title=f"{model_pick.selected_key} trajectory · {_smoothing_label}", height=340
+            )
+            .interactive()
+        )
         embedding_output = mo.ui.altair_chart(embedding_chart)
     else:
         embedding_output = mo.md("No embedding coordinates are available for this selection.")
@@ -138,7 +170,7 @@ def _(alt, mo, model_pick, subject_view):
 
 
 @app.cell
-def _(alt, mo, subject_view):
+def _(alt, mo, smoothing_days, subject_view):
     axes_ready = (
         subject_view.height
         and "activity_score" in subject_view.columns
@@ -171,9 +203,10 @@ def _(alt, mo, subject_view):
                 ],
             )
         )
+        _smoothing_label = "raw daily" if smoothing_days == 1 else f"{smoothing_days}-day mean"
         axes_output = mo.ui.altair_chart(
             (axis_line + axis_points)
-            .properties(title="Interpretable trajectory", height=340)
+            .properties(title=f"Interpretable trajectory · {_smoothing_label}", height=340)
             .interactive()
         )
     else:
@@ -310,7 +343,7 @@ def _(mo):
 def _(alt, mo, pl, subject_view):
     core = [
         name
-        for name in ("steps", "distance_m", "exercise_minutes", "resting_hr_bpm", "sleep_hours")
+        for name in ("steps", "sleep_hours", "hr_mean_bpm")
         if name in subject_view.columns
     ]
     if subject_view.height and core:

@@ -207,7 +207,9 @@ uv run health-model
 It chooses a feature-rich interval per subject, builds daily and heart-rate
 spectral features, adds interpretable relative-to-self activity and recovery
 scores, and compares PCA with a small denoising autoencoder on a temporal
-holdout. Outputs go to the gitignored `data/model/` directory.
+holdout. Raw daily values are preserved alongside causal 7- and 28-day
+smoothed trends for steps, sleep, heart rate, resting-heart-rate change, and
+the interpretable axes. Outputs go to the gitignored `data/model/` directory.
 
 The feature, missing-value, timeframe, axis, and evaluation decisions are in
 [`docs/embedding-baseline.md`](docs/embedding-baseline.md). Read that before

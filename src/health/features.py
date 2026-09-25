@@ -33,15 +33,17 @@ class Feature:
     scale: float = 1.0
 
 
-# Small enough to occur across Apple Health, Fitbit/PMData and the supplied
-# exports.  Less portable features remain available as optional candidates.
-CORE_FEATURES: tuple[str, ...] = (
+# The shared signals available in Apple Health, PMData/Fitbit and the supplied
+# exports. Availability still varies by day; this is a common vocabulary, not
+# a claim that every row contains all three values.
+COMMON_FEATURES: tuple[str, ...] = (
     "steps",
-    "distance_m",
-    "exercise_minutes",
-    "resting_hr_bpm",
     "sleep_hours",
+    "hr_mean_bpm",
 )
+
+# Kept as the public name used by the window-selection pipeline.
+CORE_FEATURES = COMMON_FEATURES
 
 SCALAR_FEATURES: tuple[Feature, ...] = (
     Feature("steps", _Q + "StepCount", "sum"),
@@ -66,8 +68,23 @@ MODEL_FEATURES: tuple[str, ...] = (
     "hr_mean_bpm",
     "hr_std_bpm",
     "hr_range_bpm",
+    "hr_p10_bpm",
+    "hr_daily_cv",
     "hr_spectral_entropy",
     "hr_low_frequency_power",
+)
+
+# Rolling means are output alongside raw features. They are deliberately not
+# included in MODEL_FEATURES: fitting on raw and multiple correlated smoothed
+# copies would overweight these signals in PCA.
+SMOOTH_FEATURES: tuple[str, ...] = (
+    "steps",
+    "sleep_hours",
+    "hr_mean_bpm",
+    "hr_p10_bpm",
+    "resting_hr_bpm",
+    "activity_score",
+    "recovery_score",
 )
 
 
@@ -182,15 +199,32 @@ def _heart_rate_features(records: pl.DataFrame, bins: int = 96) -> pl.DataFrame:
                 "hr_mean_bpm": pl.Float64,
                 "hr_std_bpm": pl.Float64,
                 "hr_range_bpm": pl.Float64,
+                "hr_samples": pl.UInt32,
+                "hr_p10_bpm": pl.Float64,
+                "hr_daily_cv": pl.Float64,
                 "hr_spectral_entropy": pl.Float64,
                 "hr_low_frequency_power": pl.Float64,
             }
         )
 
-    summaries = hr.group_by("subject_id", "date").agg(
-        pl.col("value_num").mean().alias("hr_mean_bpm"),
-        pl.col("value_num").std().alias("hr_std_bpm"),
-        (pl.col("value_num").max() - pl.col("value_num").min()).alias("hr_range_bpm"),
+    summaries = (
+        hr.group_by("subject_id", "date")
+        .agg(
+            pl.col("value_num").mean().alias("hr_mean_bpm"),
+            pl.col("value_num").std().alias("hr_std_bpm"),
+            (pl.col("value_num").max() - pl.col("value_num").min()).alias("hr_range_bpm"),
+            pl.len().alias("hr_samples"),
+            pl.when(pl.len() >= 10)
+            .then(pl.col("value_num").quantile(0.1, interpolation="linear"))
+            .otherwise(None)
+            .alias("hr_p10_bpm"),
+        )
+        .with_columns(
+            pl.when((pl.col("hr_samples") >= 10) & (pl.col("hr_mean_bpm") > 0))
+            .then(pl.col("hr_std_bpm") / pl.col("hr_mean_bpm"))
+            .otherwise(None)
+            .alias("hr_daily_cv")
+        )
     )
     spectral_rows: list[dict[str, object]] = []
     for group in hr.select("subject_id", "date", "start_local", "value_num").partition_by(
@@ -383,3 +417,43 @@ def add_interpretable_axes(daily: pl.DataFrame) -> pl.DataFrame:
             ).alias(f"{axis}_coverage"),
         ).drop(standardized)
     return result
+
+
+def add_smoothed_features(
+    daily: pl.DataFrame,
+    features: tuple[str, ...] = SMOOTH_FEATURES,
+) -> pl.DataFrame:
+    """Add trailing 7- and 28-calendar-day means without replacing raw values.
+
+    Windows are causal (today and earlier only), calculated independently per
+    subject, and require 3 or 7 real observations respectively. Missing days
+    are not converted to zero. Change features compare the short trend with the
+    28-day personal baseline.
+    """
+    result = daily.sort("subject_id", "date")
+    available = [name for name in features if name in result.columns]
+    expressions: list[pl.Expr] = []
+    for name in available:
+        expressions.extend(
+            [
+                pl.col(name)
+                .rolling_mean_by("date", "7d", min_samples=3)
+                .over("subject_id")
+                .alias(f"{name}_7d"),
+                pl.col(name)
+                .rolling_mean_by("date", "28d", min_samples=7)
+                .over("subject_id")
+                .alias(f"{name}_28d"),
+            ]
+        )
+    result = result.with_columns(expressions)
+    changes: list[pl.Expr] = []
+    change_names = {
+        "resting_hr_bpm": "resting_hr_change_bpm",
+        "hr_p10_bpm": "hr_p10_change_bpm",
+    }
+    for name, output in change_names.items():
+        short, baseline = f"{name}_7d", f"{name}_28d"
+        if short in result.columns and baseline in result.columns:
+            changes.append((pl.col(short) - pl.col(baseline)).alias(output))
+    return result.with_columns(changes)
