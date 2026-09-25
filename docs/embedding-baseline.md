@@ -113,7 +113,8 @@ It includes raw, 7-day, or 28-day PCA, autoencoder, UMAP, and t-SNE trajectories
 activity-versus-recovery movement,
 the PCA scree chart and loading heatmap, per-feature held-out errors, and a
 core-feature availability timeline. The embedding picker also includes UMAP
-and t-SNE for exploratory cluster inspection.
+and t-SNE for exploratory cluster inspection, and the time-series picker lets
+you inspect raw or smoothed shared signals and heart-rate changes directly.
 
 The current local four-subject dataset is only a pipeline smoke test. On the
 2026-09-16 run with the shared steps/sleep/HR window, all four subjects met the

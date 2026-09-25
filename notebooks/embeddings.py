@@ -42,7 +42,9 @@ def _(Path, json, pl):
         daily = pl.read_parquet(DAILY_PATH)
         embedding = pl.read_parquet(EMBEDDING_PATH)
         report = json.loads(REPORT_PATH.read_text())
-        combined = daily.join(embedding, on=["subject_id", "date"], how="inner")
+        combined = daily.join(embedding, on=["subject_id", "date"], how="inner").with_columns(
+            pl.col("subject_id").cast(pl.String)
+        )
     else:
         daily = pl.DataFrame(
             schema={
@@ -94,10 +96,26 @@ def _(combined, mo):
         value="7-day mean",
         label="Smoothing",
     )
-    mo.hstack(
-        [subject_pick, model_pick, smoothing_pick, history_pick], justify="start", gap=2
+    series_pick = mo.ui.dropdown(
+        {
+            "Steps": "steps",
+            "Sleep duration": "sleep_hours",
+            "Heart rate": "hr_mean_bpm",
+            "Resting heart rate": "resting_hr_bpm",
+            "Resting HR change": "resting_hr_change_bpm",
+            "HR p10 change": "hr_p10_change_bpm",
+            "Activity score": "activity_score",
+            "Recovery score": "recovery_score",
+        },
+        value="Steps",
+        label="Time series",
     )
-    return history_pick, model_pick, smoothing_pick, subject_pick
+    mo.hstack(
+        [subject_pick, model_pick, smoothing_pick, series_pick, history_pick],
+        justify="start",
+        gap=2,
+    )
+    return history_pick, model_pick, series_pick, smoothing_pick, subject_pick
 
 
 @app.cell
@@ -141,6 +159,15 @@ def _(combined, history_pick, model_pick, pl, smoothing_pick, subject_pick):
 
 
 @app.cell
+def _(mo, smoothing_days, subject_pick, subject_view):
+    mo.md(f"""
+    Showing **{subject_pick.value}** · {subject_view.height:,} days · "
+        f"{('raw daily' if smoothing_days == 1 else f'{smoothing_days}-day mean')}
+    """)
+    return
+
+
+@app.cell
 def _(alt, mo, model_pick, smoothing_days, subject_view):
     if subject_view.height and "embedding_x" in subject_view.columns:
         trajectory_line = (
@@ -172,6 +199,36 @@ def _(alt, mo, model_pick, smoothing_days, subject_view):
     else:
         embedding_output = mo.md("No embedding coordinates are available for this selection.")
     embedding_output
+    return
+
+
+@app.cell
+def _(alt, mo, pl, series_pick, smoothing_days, subject_view):
+    series_name = series_pick.value
+    smoothed_name = f"{series_name}_{smoothing_days}d"
+    value_name = smoothed_name if smoothing_days > 1 and smoothed_name in subject_view.columns else series_name
+    if subject_view.height and value_name in subject_view.columns:
+        series_data = subject_view.select(
+            "date", "subject_id", pl.col(value_name).alias("series_value")
+        ).drop_nulls("series_value")
+        time_chart = (
+            alt.Chart(series_data)
+            .mark_line(point=True)
+            .encode(
+                x=alt.X("date:T", title="Date"),
+                y=alt.Y("series_value:Q", title=series_pick.selected_key),
+                tooltip=["date:T", alt.Tooltip("series_value:Q", format=".3f")],
+            )
+            .properties(
+                title=f"{series_pick.selected_key} over time",
+                height=260,
+            )
+            .interactive()
+        )
+        time_output = mo.ui.altair_chart(time_chart)
+    else:
+        time_output = mo.md(f"No observations are available for {series_pick.selected_key}.")
+    time_output
     return
 
 
