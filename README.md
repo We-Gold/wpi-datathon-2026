@@ -204,10 +204,31 @@ uv sync --all-groups
 uv run health-model
 ```
 
+To run leakage-safe multi-horizon activity/recovery forecasts (persistence,
+seasonal persistence, rolling mean, Ridge, LightGBM, and ElasticNet) and write
+predictions plus metrics, use:
+
+```bash
+uv run health-forecast
+```
+
+Before each forecast run, the pipeline checks every subject's available input
+and target series for stationarity with ADF and KPSS tests. It selects zero,
+one, or two differences independently per subject and feature, fitting the
+decision on the first 80% of that subject's timeline only. Forecast models use
+those differenced values; evaluation reconstructs predictions to the original
+activity/recovery score scale using values known at the forecast origin. The
+stationarity tests use each feature's longest contiguous observed segment so
+missing calendar days are not treated as adjacent observations. The selected
+order, test diagnostics, and reconstruction rule are saved in
+`data/model/forecast_evaluation.json`.
+
 It chooses a feature-rich interval per subject, builds daily and heart-rate
 spectral features, adds interpretable relative-to-self activity and recovery
 scores, and compares PCA with a small denoising autoencoder on a temporal
-holdout. Outputs go to the gitignored `data/model/` directory.
+holdout. Raw daily values are preserved alongside causal 7- and 28-day
+smoothed trends for steps, sleep, heart rate, resting-heart-rate change, and
+the interpretable axes. Outputs go to the gitignored `data/model/` directory.
 
 The feature, missing-value, timeframe, axis, and evaluation decisions are in
 [`docs/embedding-baseline.md`](docs/embedding-baseline.md). Read that before

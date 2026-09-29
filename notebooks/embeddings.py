@@ -42,7 +42,9 @@ def _(Path, json, pl):
         daily = pl.read_parquet(DAILY_PATH)
         embedding = pl.read_parquet(EMBEDDING_PATH)
         report = json.loads(REPORT_PATH.read_text())
-        combined = daily.join(embedding, on=["subject_id", "date"], how="inner")
+        combined = daily.join(embedding, on=["subject_id", "date"], how="inner").with_columns(
+            pl.col("subject_id").cast(pl.String)
+        )
     else:
         daily = pl.DataFrame(
             schema={
@@ -55,7 +57,7 @@ def _(Path, json, pl):
         embedding = pl.DataFrame()
         combined = daily
         report = {}
-    return MODEL_DIR, artifacts_exist, combined, daily, report
+    return MODEL_DIR, artifacts_exist, combined, report
 
 
 @app.cell
@@ -77,7 +79,9 @@ def _(combined, mo):
         label="Subject",
     )
     model_pick = mo.ui.dropdown(
-        {"PCA": "pc", "Autoencoder": "ae"}, value="PCA", label="Embedding"
+        {"PCA": "pc", "Autoencoder": "ae", "UMAP": "umap", "t-SNE": "tsne"},
+        value="PCA",
+        label="Embedding",
     )
     history_pick = mo.ui.slider(
         start=30,
@@ -87,49 +91,110 @@ def _(combined, mo):
         label="Latest days",
         show_value=True,
     )
-    mo.hstack([subject_pick, model_pick, history_pick], justify="start", gap=2)
-    return history_pick, model_pick, subject_pick
+    smoothing_pick = mo.ui.dropdown(
+        {"Raw daily": 1, "7-day mean": 7, "28-day mean": 28},
+        value="7-day mean",
+        label="Smoothing",
+    )
+    series_pick = mo.ui.dropdown(
+        {
+            "Steps": "steps",
+            "Sleep duration": "sleep_hours",
+            "Heart rate": "hr_mean_bpm",
+            "Resting heart rate": "resting_hr_bpm",
+            "Resting HR change": "resting_hr_change_bpm",
+            "HR p10 change": "hr_p10_change_bpm",
+            "Activity score": "activity_score",
+            "Recovery score": "recovery_score",
+        },
+        value="Steps",
+        label="Time series",
+    )
+    mo.hstack(
+        [subject_pick, model_pick, smoothing_pick, series_pick, history_pick],
+        justify="start",
+        gap=2,
+    )
+    return history_pick, model_pick, series_pick, smoothing_pick, subject_pick
 
 
 @app.cell
-def _(combined, history_pick, pl, subject_pick):
+def _(combined, history_pick, model_pick, pl, smoothing_pick, subject_pick):
     if combined.height and subject_pick.value is not None:
-        subject_view = (
-            combined.filter(pl.col("subject_id").cast(pl.String) == subject_pick.value)
-            .sort("date")
-            .tail(history_pick.value)
-        )
+        subject_view = combined.filter(
+            pl.col("subject_id").cast(pl.String) == subject_pick.value
+        ).sort("date")
+        smoothing_days = smoothing_pick.value
+        prefix = model_pick.value
+        coordinate_columns = [
+            name
+            for name in ("pc_1", "pc_2", "ae_1", "ae_2", "umap_1", "umap_2", "tsne_1", "tsne_2")
+            if name in subject_view.columns
+        ]
+        if smoothing_days > 1:
+            minimum = 3 if smoothing_days == 7 else 7
+            subject_view = subject_view.with_columns(
+                *(
+                    pl.col(name)
+                    .rolling_mean_by("date", f"{smoothing_days}d", min_samples=minimum)
+                    .alias(name)
+                    for name in coordinate_columns
+                )
+            )
+            for axis in ("activity_score", "recovery_score"):
+                smoothed = f"{axis}_{smoothing_days}d"
+                if smoothed in subject_view.columns:
+                    subject_view = subject_view.with_columns(pl.col(smoothed).alias(axis))
+        subject_view = subject_view.tail(history_pick.value)
+        x_name, y_name = f"{prefix}_1", f"{prefix}_2"
+        if x_name in subject_view.columns and y_name in subject_view.columns:
+            subject_view = subject_view.with_columns(
+                pl.col(x_name).alias("embedding_x"),
+                pl.col(y_name).alias("embedding_y"),
+            )
     else:
         subject_view = combined
-    return (subject_view,)
+        smoothing_days = smoothing_pick.value
+    return smoothing_days, subject_view
 
 
 @app.cell
-def _(alt, mo, model_pick, subject_view):
-    prefix = model_pick.value
-    x_name = f"{prefix}_1"
-    y_name = f"{prefix}_2"
-    if subject_view.height and x_name in subject_view.columns and y_name in subject_view.columns:
+def _(mo, smoothing_days, subject_pick, subject_view):
+    mo.md(f"""
+    Showing **{subject_pick.value}** · {subject_view.height:,} days · "
+        f"{('raw daily' if smoothing_days == 1 else f'{smoothing_days}-day mean')}
+    """)
+    return
+
+
+@app.cell
+def _(alt, mo, model_pick, smoothing_days, subject_view):
+    if subject_view.height and "embedding_x" in subject_view.columns:
         trajectory_line = (
             alt.Chart(subject_view)
             .mark_line(opacity=0.35)
-            .encode(x=alt.X(f"{x_name}:Q", title=f"{model_pick.selected_key} dimension 1"),
-                    y=alt.Y(f"{y_name}:Q", title=f"{model_pick.selected_key} dimension 2"),
+            .encode(x=alt.X("embedding_x:Q", title=f"{model_pick.selected_key} dimension 1"),
+                    y=alt.Y("embedding_y:Q", title=f"{model_pick.selected_key} dimension 2"),
                     order="date:T")
         )
         trajectory_points = (
             alt.Chart(subject_view)
             .mark_circle(size=45)
             .encode(
-                x=f"{x_name}:Q",
-                y=f"{y_name}:Q",
+                x="embedding_x:Q",
+                y="embedding_y:Q",
                 color=alt.Color("date:T", title="Date", scale=alt.Scale(scheme="viridis")),
-                tooltip=["subject_id:N", "date:T", f"{x_name}:Q", f"{y_name}:Q"],
+                tooltip=["subject_id:N", "date:T", "embedding_x:Q", "embedding_y:Q"],
             )
         )
-        embedding_chart = (trajectory_line + trajectory_points).properties(
-            title=f"{model_pick.selected_key} trajectory", height=340
-        ).interactive()
+        _smoothing_label = "raw daily" if smoothing_days == 1 else f"{smoothing_days}-day mean"
+        embedding_chart = (
+            (trajectory_line + trajectory_points)
+            .properties(
+                title=f"{model_pick.selected_key} trajectory · {_smoothing_label}", height=340
+            )
+            .interactive()
+        )
         embedding_output = mo.ui.altair_chart(embedding_chart)
     else:
         embedding_output = mo.md("No embedding coordinates are available for this selection.")
@@ -138,7 +203,52 @@ def _(alt, mo, model_pick, subject_view):
 
 
 @app.cell
-def _(alt, mo, subject_view):
+def _(alt, mo, pl, series_pick, smoothing_days, subject_view):
+    series_units = {
+        "steps": "count",
+        "sleep_hours": "hours",
+        "hr_mean_bpm": "bpm",
+        "resting_hr_bpm": "bpm",
+        "resting_hr_change_bpm": "bpm change",
+        "hr_p10_change_bpm": "bpm change",
+        "activity_score": "relative IQR units",
+        "recovery_score": "relative IQR units",
+    }
+    series_name = series_pick.value
+    smoothed_name = f"{series_name}_{smoothing_days}d"
+    value_name = smoothed_name if smoothing_days > 1 and smoothed_name in subject_view.columns else series_name
+    if subject_view.height and value_name in subject_view.columns:
+        series_label = series_pick.selected_key
+        series_unit = series_units.get(series_name, "canonical units")
+        series_data = subject_view.select(
+            "date", "subject_id", pl.col(value_name).alias("series_value")
+        ).drop_nulls("series_value")
+        time_chart = (
+            alt.Chart(series_data)
+            .mark_line(point=True)
+            .encode(
+                x=alt.X("date:T", title="Date"),
+                y=alt.Y("series_value:Q", title=f"{series_label} ({series_unit})"),
+                tooltip=[
+                    "date:T",
+                    alt.Tooltip("series_value:Q", title=f"{series_label} ({series_unit})", format=".3f"),
+                ],
+            )
+            .properties(
+                title=f"{series_pick.selected_key} over time",
+                height=260,
+            )
+            .interactive()
+        )
+        time_output = mo.ui.altair_chart(time_chart)
+    else:
+        time_output = mo.md(f"No observations are available for {series_pick.selected_key}.")
+    time_output
+    return
+
+
+@app.cell
+def _(alt, mo, smoothing_days, subject_view):
     axes_ready = (
         subject_view.height
         and "activity_score" in subject_view.columns
@@ -171,9 +281,10 @@ def _(alt, mo, subject_view):
                 ],
             )
         )
+        _smoothing_label = "raw daily" if smoothing_days == 1 else f"{smoothing_days}-day mean"
         axes_output = mo.ui.altair_chart(
             (axis_line + axis_points)
-            .properties(title="Interpretable trajectory", height=340)
+            .properties(title=f"Interpretable trajectory · {_smoothing_label}", height=340)
             .interactive()
         )
     else:
@@ -310,7 +421,7 @@ def _(mo):
 def _(alt, mo, pl, subject_view):
     core = [
         name
-        for name in ("steps", "distance_m", "exercise_minutes", "resting_hr_bpm", "sleep_hours")
+        for name in ("steps", "sleep_hours", "hr_mean_bpm")
         if name in subject_view.columns
     ]
     if subject_view.height and core:
@@ -345,6 +456,302 @@ def _(alt, mo, pl, subject_view):
 def _(mo, pl, report):
     windows = pl.DataFrame(report.get("windows", []))
     mo.ui.table(windows, selection=None) if windows.height else mo.md("No selected windows available.")
+    return
+
+
+@app.cell
+def _(MODEL_DIR, json, pl):
+    FORECAST_PATH = MODEL_DIR / "forecast_predictions.parquet"
+    FORECAST_REPORT_PATH = MODEL_DIR / "forecast_evaluation.json"
+    forecast_artifacts_exist = FORECAST_PATH.exists() and FORECAST_REPORT_PATH.exists()
+    if forecast_artifacts_exist:
+        forecast_predictions = pl.read_parquet(FORECAST_PATH).with_columns(
+            pl.col("subject_id").cast(pl.String)
+        )
+        forecast_report = json.loads(FORECAST_REPORT_PATH.read_text())
+        if "horizon_days" not in forecast_predictions.columns:
+            legacy_horizon = forecast_report.get("horizon_days", 1)
+            forecast_predictions = forecast_predictions.with_columns(
+                pl.lit(legacy_horizon).alias("horizon_days")
+            )
+    else:
+        forecast_predictions = pl.DataFrame(
+            schema={"subject_id": pl.String, "date": pl.Date, "target_date": pl.Date}
+        )
+        forecast_report = {}
+    return forecast_artifacts_exist, forecast_predictions, forecast_report
+
+
+@app.cell
+def _(forecast_artifacts_exist, forecast_predictions, forecast_report, mo):
+    mo.md(
+        "Loaded next-day forecast artifacts."
+        if forecast_artifacts_exist
+        else "Run `uv run health-forecast` first, then rerun this notebook."
+    )
+    forecast_subjects = (
+        forecast_predictions["subject_id"].unique().sort().to_list()
+        if forecast_predictions.height
+        else []
+    )
+    forecast_horizons = (
+        forecast_predictions["horizon_days"].unique().sort().to_list()
+        if forecast_predictions.height
+        else forecast_report.get("horizon_days", [])
+    )
+    if isinstance(forecast_horizons, int):
+        forecast_horizons = [forecast_horizons]
+    forecast_horizons = sorted({1, 3, 7, 14, *forecast_horizons})
+    generated_horizons = (
+        forecast_predictions["horizon_days"].unique().sort().to_list()
+        if forecast_predictions.height
+        else []
+    )
+    forecast_subject_pick = mo.ui.dropdown(
+        forecast_subjects,
+        value=forecast_subjects[0] if forecast_subjects else None,
+        label="Forecast subject",
+    )
+    forecast_target_pick = mo.ui.dropdown(
+        {"Activity score": "activity_score", "Recovery score": "recovery_score"},
+        value="Activity score",
+        label="Forecast target",
+    )
+    forecast_horizon_options = {
+        f"{horizon} day" if horizon == 1 else f"{horizon} days": horizon
+        for horizon in forecast_horizons
+    }
+    forecast_horizon_pick = mo.ui.dropdown(
+        forecast_horizon_options,
+        value=next(iter(forecast_horizon_options), None),
+        label="Forecast horizon",
+    )
+    forecast_history_pick = mo.ui.slider(
+        start=30,
+        stop=730,
+        step=10,
+        value=180,
+        label="Latest forecast days",
+        show_value=True,
+    )
+    mo.hstack(
+        [forecast_subject_pick, forecast_target_pick, forecast_horizon_pick, forecast_history_pick],
+        justify="start",
+        gap=2,
+    )
+    #mo.md(
+    #    f"Saved forecast horizons: {', '.join(map(str, generated_horizons)) or 'none'}. "
+    #    "Run `uv run health-forecast` to generate predictions and evaluation for all supported horizons."
+    #)
+    return (
+        forecast_history_pick,
+        forecast_horizon_pick,
+        forecast_subject_pick,
+        forecast_target_pick,
+    )
+
+
+@app.cell
+def _(
+    forecast_history_pick,
+    forecast_horizon_pick,
+    forecast_predictions,
+    forecast_subject_pick,
+    forecast_target_pick,
+    pl,
+):
+    forecast_target = forecast_target_pick.value
+    forecast_horizon = forecast_horizon_pick.value
+    if (
+        forecast_predictions.height
+        and forecast_subject_pick.value is not None
+        and forecast_horizon is not None
+    ):
+        forecast_view = (
+            forecast_predictions.filter(
+                (pl.col("subject_id") == forecast_subject_pick.value)
+                & (pl.col("horizon_days") == forecast_horizon)
+            )
+            .sort("target_date")
+            .tail(forecast_history_pick.value)
+        )
+        if forecast_view.height:
+            forecast_series_columns = [
+                pl.col(f"target__{forecast_target}").alias("Actual"),
+                pl.col(f"persistence__{forecast_target}").alias("Persistence"),
+            ]
+            seasonal_column = f"seasonal_persistence__{forecast_target}"
+            if seasonal_column in forecast_view.columns:
+                forecast_series_columns.append(
+                    pl.col(seasonal_column).alias("Seasonal persistence")
+                )
+            forecast_series_columns.extend(
+                [
+                    pl.col(f"rolling__{forecast_target}").alias("4-day rolling mean"),
+                ]
+            )
+            for model_Name, label in (
+                ("ridge", "Ridge"),
+                ("lightgbm", "LightGBM"),
+                ("elasticnet", "ElasticNet"),
+            ):
+                model_column = f"{model_Name}__{forecast_target}"
+                if model_column in forecast_view.columns:
+                    forecast_series_columns.append(pl.col(model_column).alias(label))
+            forecast_series = forecast_view.select(
+                "target_date", *forecast_series_columns
+            ).unpivot(index="target_date", variable_name="series", value_name="score")
+        else:
+            forecast_series = pl.DataFrame(
+                schema={"target_date": pl.Date, "series": pl.String, "score": pl.Float64}
+            )
+    else:
+        forecast_view = forecast_predictions
+        forecast_series = pl.DataFrame(
+            schema={"target_date": pl.Date, "series": pl.String, "score": pl.Float64}
+        )
+    seasonal_available = (
+        forecast_view.height > 0
+        and f"seasonal_persistence__{forecast_target}" in forecast_view.columns
+    )
+    return forecast_horizon, forecast_series, forecast_view, seasonal_available
+
+
+@app.cell
+def _(
+    forecast_horizon,
+    forecast_subject_pick,
+    forecast_target_pick,
+    forecast_view,
+    mo,
+):
+    mo.md(f"""
+    Showing **{forecast_subject_pick.value}** · {forecast_view.height:,} held-out rows ·
+    {forecast_target_pick.selected_key} · {forecast_horizon}-day horizon
+    """)
+    return
+
+
+@app.cell
+def _(
+    alt,
+    forecast_horizon,
+    forecast_series,
+    forecast_target_pick,
+    mo,
+    seasonal_available,
+):
+    if forecast_series.height:
+        forecast_chart = (
+            alt.Chart(forecast_series.drop_nulls("score"))
+            .mark_line(point=True)
+            .encode(
+                x=alt.X("target_date:T", title="Target date"),
+                y=alt.Y(
+                    "score:Q",
+                    title=f"{forecast_target_pick.selected_key} (relative to self)",
+                ),
+                color=alt.Color("series:N", title=None, scale=alt.Scale(scheme="tableau10")),
+                strokeDash=alt.StrokeDash(
+                    "series:N",
+                    title=None,
+                    scale=alt.Scale(
+                        domain=[
+                            "Actual",
+                            "Persistence",
+                            "Seasonal persistence",
+                            "4-day rolling mean",
+                            "Ridge",
+                            "LightGBM",
+                            "ElasticNet",
+                        ],
+                        range=[
+                            [1, 0],
+                            [5, 3],
+                            [3, 2],
+                            [2, 2],
+                            [1, 0],
+                            [5, 3],
+                            [3, 2],
+                        ],
+                    ),
+                ),
+                tooltip=[
+                    "target_date:T",
+                    "series:N",
+                    alt.Tooltip("score:Q", format=".3f"),
+                ],
+            )
+            .properties(
+                title=f"{forecast_horizon}-day forecasts vs. observed scores", height=320
+            )
+            .interactive()
+        )
+        forecast_chart_output = mo.vstack(
+            [
+                mo.ui.altair_chart(forecast_chart),
+                mo.md(
+                    "Seasonal persistence is not in these saved forecasts. "
+                    "Rerun `uv run health-forecast` to regenerate them."
+                )
+                if not seasonal_available
+                else mo.md(""),
+            ]
+        )
+    else:
+        forecast_chart_output = mo.md(
+            "No forecast predictions are saved for this subject and horizon. "
+            "Run `uv run health-forecast` to generate them."
+        )
+    forecast_chart_output
+    return
+
+
+@app.cell
+def _(
+    alt,
+    forecast_horizon_pick,
+    forecast_report,
+    forecast_target_pick,
+    mo,
+    pl,
+):
+    selected_horizon = forecast_horizon_pick.value
+    horizon_report = forecast_report.get("horizons", {}).get(
+        str(selected_horizon), forecast_report
+    )
+    target_metrics = horizon_report.get("targets", {}).get(forecast_target_pick.value, {})
+    metric_rows = [
+        {
+            "model": model.replace("_", " ").title(),
+            "metric": metric.upper(),
+            "value": result.get(metric),
+            "n": result.get("n"),
+        }
+        for model, result in target_metrics.items()
+        for metric in ("mae", "rmse")
+        if result.get(metric) is not None
+    ]
+    forecast_metrics = pl.DataFrame(metric_rows) if metric_rows else pl.DataFrame(
+        schema={"model": pl.String, "metric": pl.String, "value": pl.Float64, "n": pl.Int64}
+    )
+    if forecast_metrics.height:
+        forecast_metric_chart = (
+            alt.Chart(forecast_metrics)
+            .mark_bar()
+            .encode(
+                x=alt.X("value:Q", title="Error (relative IQR units)"),
+                y=alt.Y("model:N", title=None, sort=None),
+                color=alt.Color("metric:N", title=None),
+                yOffset="metric:N",
+                tooltip=["model:N", "metric:N", alt.Tooltip("value:Q", format=".3f"), "n:Q"],
+            )
+            .properties(title=f"{selected_horizon}-day held-out forecast error", height=240)
+        )
+        forecast_metrics_output = mo.ui.altair_chart(forecast_metric_chart)
+    else:
+        forecast_metrics_output = mo.md("No forecast evaluation metrics are available.")
+    forecast_metrics_output
     return
 
 
