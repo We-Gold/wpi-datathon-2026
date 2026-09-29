@@ -182,7 +182,7 @@ def _(everything, pl):
         .sort("tracked", descending=True)
     )
     richness
-    return MIN_DAYS, per_subject, richness
+    return DATASET_LABELS, MIN_DAYS, per_subject, richness
 
 
 @app.cell
@@ -461,14 +461,253 @@ def source_comparison(Counter, alt, pl, source_stats, textwrap):
         .configure_view(strokeWidth=0)
     )
     source_comparison_chart
-    return (source_comparison_chart,)
+    return SOURCE_CARDS, source_comparison_chart
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md("""
+    ## Which features each source records
+
+    One row per model feature from `data/model/daily_features.parquet`, one column per
+    source. The number is the share of each person's days with a value, averaged over
+    the people in that source. Heart rate statistics that all come from the same
+    sampled stream (spread, range, low percentile, spectral) are shown as one row.
+    """)
+    return
+
+
+@app.cell
+def feature_coverage(ROOT, pl, source_stats):
+    # The model features, named for the slide and grouped by what they measure.
+    # The derived heart rate statistics are left out because they share one stream
+    # with hr_mean_bpm and would repeat its row.
+    FEATURE_LABELS = {
+        "Activity": {
+            "steps": "Steps",
+            "distance_m": "Distance",
+            "exercise_minutes": "Exercise minutes",
+            "active_energy_kcal": "Active energy",
+            "total_energy_kcal": "Total energy",
+            "light_activity_hours": "Light activity",
+            "sedentary_hours": "Sedentary time",
+        },
+        "Heart": {
+            "hr_mean_bpm": "Heart rate",
+            "resting_hr_bpm": "Resting heart rate",
+            "hrv_sdnn_ms": "Heart rate variability",
+            "respiratory_rate": "Respiratory rate",
+        },
+        "Sleep": {
+            "sleep_hours": "Sleep duration",
+            "sleep_efficiency": "Sleep efficiency",
+            "sleep_score": "Sleep score",
+            "sleep_restlessness": "Restlessness",
+            "readiness": "Readiness",
+        },
+    }
+    _features = [f for group in FEATURE_LABELS.values() for f in group]
+
+    daily_model = pl.read_parquet(ROOT / "data" / "model" / "daily_features.parquet").with_columns(
+        pl.col("subject_id").cast(pl.String)
+    )
+    # Which source each subject belongs to, keyed the same way as daily_model.
+    subject_sources = source_stats.select(pl.col("subject_id").cast(pl.String), "source")
+
+    feature_coverage = (
+        daily_model.select("subject_id", *[pl.col(f).is_not_null().alias(f) for f in _features])
+        .group_by("subject_id")
+        .mean()
+        .unpivot(index="subject_id", variable_name="feature", value_name="share")
+        .join(subject_sources, on="subject_id")
+        .group_by("source", "feature")
+        .agg(pl.col("share").mean(), pl.len().alias("people"))
+        .with_columns(
+            pl.col("feature")
+            .replace_strict({f: g for g, fs in FEATURE_LABELS.items() for f in fs})
+            .alias("group"),
+            pl.col("feature")
+            .replace_strict({f: l for fs in FEATURE_LABELS.values() for f, l in fs.items()})
+            .alias("label"),
+        )
+        .sort("group", "feature", "source")
+    )
+    feature_coverage
+    return FEATURE_LABELS, daily_model, feature_coverage, subject_sources
+
+
+@app.cell
+def feature_heatmap(FEATURE_LABELS, SOURCE_CARDS, alt, feature_coverage):
+    _source_order = list(SOURCE_CARDS)
+    # Rows keep the order FEATURE_LABELS lists them in, grouped under a header each.
+    _label_order = [l for fs in FEATURE_LABELS.values() for l in fs.values()]
+
+    _base = alt.Chart(feature_coverage).encode(
+        x=alt.X(
+            "source:N",
+            sort=_source_order,
+            title=None,
+            axis=alt.Axis(orient="top", labelAngle=0, labelFontWeight="bold", ticks=False, domain=False),
+        ),
+        y=alt.Y("label:N", sort=_label_order, title=None, axis=alt.Axis(ticks=False, domain=False)),
+    )
+
+    _cells = _base.mark_rect(stroke="white", strokeWidth=2).encode(
+        color=alt.condition(
+            alt.datum.share > 0,
+            alt.Color(
+                "share:Q",
+                scale=alt.Scale(domain=[0, 1], scheme="viridis"),
+                legend=alt.Legend(
+                    title="Days with a value",
+                    format=".0%",
+                    orient="right",
+                    gradientLength=240,
+                    titleFontSize=13,
+                    labelFontSize=12,
+                ),
+            ),
+            alt.value("#f4f4f4"),
+        ),
+        tooltip=[
+            "label:N",
+            "source:N",
+            alt.Tooltip("share:Q", format=".0%", title="days with a value"),
+            alt.Tooltip("people:Q", title="people"),
+        ],
+    )
+
+    feature_heatmap_chart = (
+        _cells
+        .properties(width=260, height=alt.Step(26))
+        .facet(
+            row=alt.Row(
+                "group:N",
+                sort=list(FEATURE_LABELS),
+                title=None,
+                header=alt.Header(labelAngle=0, labelAlign="left", labelFontSize=15, labelFontWeight="bold"),
+            ),
+            spacing=14,
+        )
+        .resolve_scale(y="independent")
+        # .properties(
+        #     title=alt.Title(
+        #         "Each source records a different mix of signals",
+        #         subtitle="Share of each person's days with a value, averaged within the source. Grey: never recorded.",
+        #     )
+        # )
+        .configure_axis(labelFontSize=14, grid=False)
+        .configure_title(fontSize=20, subtitleFontSize=13, anchor="start")
+        .configure_view(strokeWidth=0)
+    )
+    feature_heatmap_chart
+    return (feature_heatmap_chart,)
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md("""
+    ## When each subject has rich data
+
+    A day counts as rich when `feature_completeness` is at least `RICH_THRESHOLD`, the
+    same 60% bar the pipeline uses to choose feature-rich periods. The grey bar is the
+    span the subject has any data. Shown for the two Apple exports, the two Kaggle
+    files, and the six PMData subjects with the most rich days. Each source has its
+    own date axis, since PMData is from 2019 to 2020 and the rest are from 2023 on.
+    """)
+    return
+
+
+@app.cell
+def rich_days(DATASET_LABELS, daily_model, pl, subject_sources):
+    RICH_THRESHOLD = 0.6
+    PMDATA_SHOWN = 6
+
+    _per_subject = (
+        daily_model.join(subject_sources, on="subject_id")
+        .group_by("subject_id", "source")
+        .agg(
+            (pl.col("feature_completeness") >= RICH_THRESHOLD).sum().alias("rich_days"),
+            pl.col("date").min().alias("first"),
+            pl.col("date").max().alias("last"),
+        )
+    )
+    _pmdata = (
+        _per_subject.filter(pl.col("source") == "PMData")
+        .sort("rich_days", "subject_id", descending=[True, False])
+        .head(PMDATA_SHOWN)
+    )
+    rich_subjects = (
+        pl.concat([_per_subject.filter(pl.col("source") != "PMData"), _pmdata])
+        .with_columns(
+            pl.col("subject_id").replace(DATASET_LABELS).alias("name"),
+        )
+        .sort("source", "subject_id")
+    )
+    rich_days = daily_model.filter(
+        pl.col("subject_id").is_in(rich_subjects["subject_id"].implode())
+        & (pl.col("feature_completeness") >= RICH_THRESHOLD)
+    ).select("subject_id", "date").join(rich_subjects.select("subject_id", "name", "source"), on="subject_id")
+    rich_subjects
+    return rich_days, rich_subjects
+
+
+@app.cell
+def rich_timeline(SOURCE_CARDS, alt, pl, rich_days, rich_subjects):
+    def _panel(source):
+        _spans = rich_subjects.filter(pl.col("source") == source)
+        _days = rich_days.filter(pl.col("source") == source)
+        _names = _spans["name"].to_list()
+        _y = alt.Y("name:N", sort=_names, title=None, axis=alt.Axis(ticks=False, domain=False))
+        _color = SOURCE_CARDS[source]["color"]
+
+        _span = (
+            alt.Chart(_spans)
+            .mark_bar(color="#e6e6e6", height=16, cornerRadius=3)
+            .encode(x=alt.X("first:T", title=None), x2="last:T", y=_y)
+        )
+        # One bar per rich day, a day wide, so an unbroken run reads as a solid block.
+        _ticks = (
+            alt.Chart(_days.with_columns((pl.col("date") + pl.duration(days=1)).alias("next")))
+            .mark_bar(color=_color, stroke=_color, strokeWidth=0.4, height=16)
+            .encode(x="date:T", x2="next:T", y=_y, tooltip=["name:N", "date:T"])
+        )
+        _count = (
+            alt.Chart(_spans)
+            .mark_text(align="left", dx=8, fontSize=12, color="#444")
+            .encode(x="last:T", y=_y, text=alt.Text("rich_days:Q", format=",d"))
+        )
+        return alt.layer(_span, _ticks, _count).properties(
+            width=400,
+            height=alt.Step(26),
+            title=alt.Title(source, fontSize=15, color=_color, anchor="start"),
+        )
+
+
+    rich_timeline_chart = (
+        alt.vconcat(*[_panel(s) for s in SOURCE_CARDS], spacing=18)
+        .resolve_scale(x="independent")
+        # .properties(
+        #     title=alt.Title(
+        #         "Rich data is long for our exports, short for PMData, rare for Kaggle",
+        #         subtitle=f"Colored: days with at least {RICH_THRESHOLD:.0%} of model features. Grey: any data. Number: rich days. Each source has its own date axis.",
+        #     )
+        # )
+        .configure_axis(labelFontSize=13, grid=False)
+        .configure_title(fontSize=20, subtitleFontSize=13, anchor="start")
+        .configure_view(strokeWidth=0)
+    )
+    rich_timeline_chart
+    return (rich_timeline_chart,)
 
 
 @app.cell
 def export_figures(
     ROOT,
+    feature_heatmap_chart,
     kaggle_json_table_chart,
     mo,
+    rich_timeline_chart,
     richness_chart,
     source_comparison_chart,
 ):
@@ -481,6 +720,8 @@ def export_figures(
         "kaggle_json_overview.png": kaggle_json_table_chart,
         "dataset_richness.png": richness_chart,
         "source_comparison.png": source_comparison_chart,
+        "feature_heatmap.png": feature_heatmap_chart,
+        "rich_timeline.png": rich_timeline_chart,
     }
     for _name, _chart in _exports.items():
         _chart.save(FIGURES / _name, scale_factor=4)
