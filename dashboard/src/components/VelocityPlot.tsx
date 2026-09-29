@@ -1,10 +1,15 @@
 import { format, scaleLinear } from "d3";
+import { useId } from "react";
 import { AXIS_LABELS } from "../config";
 import { useElementWidth } from "../lib/useElementWidth";
 import type { AxisVector } from "../types";
 
 interface Props {
 	velocity: AxisVector;
+	/** Simulated velocity, drawn as a second arrow. */
+	whatIf?: AxisVector;
+	/** Largest side in pixels. */
+	maxSize?: number;
 }
 
 const PAD = 34;
@@ -14,10 +19,15 @@ const formatValue = format("+.3f");
  * Today's velocity on the same axes as the map, drawn from the origin. The two
  * colored legs are the part on each axis.
  */
-export function VelocityPlot({ velocity }: Props) {
+export function VelocityPlot({ velocity, whatIf, maxSize = 320 }: Props) {
 	const [containerRef, width] = useElementWidth<HTMLDivElement>();
-	const size = Math.min(width, 320);
-	const extent = Math.max(Math.abs(velocity.activity), Math.abs(velocity.recovery)) * 1.35 || 1;
+	// The plot appears on both tabs, so marker ids must be unique per instance.
+	const id = useId();
+	const size = Math.min(width, maxSize);
+	const vectors = whatIf ? [velocity, whatIf] : [velocity];
+	const extent =
+		Math.max(...vectors.map((v) => Math.max(Math.abs(v.activity), Math.abs(v.recovery)))) * 1.35 ||
+		1;
 	const scale = scaleLinear()
 		.domain([-extent, extent])
 		.range([PAD, size - PAD]);
@@ -37,7 +47,7 @@ export function VelocityPlot({ velocity }: Props) {
 				>
 					<defs>
 						<marker
-							id="velocity-arrow"
+							id={`${id}-arrow`}
 							viewBox="0 0 10 10"
 							refX="8"
 							refY="5"
@@ -46,6 +56,17 @@ export function VelocityPlot({ velocity }: Props) {
 							orient="auto-start-reverse"
 						>
 							<path d="M0,1 L9,5 L0,9 Z" className="arrow-head" />
+						</marker>
+						<marker
+							id={`${id}-what-if`}
+							viewBox="0 0 10 10"
+							refX="8"
+							refY="5"
+							markerWidth="7"
+							markerHeight="7"
+							orient="auto-start-reverse"
+						>
+							<path d="M0,1 L9,5 L0,9 Z" className="what-if-arrow-head" />
 						</marker>
 					</defs>
 
@@ -78,27 +99,42 @@ export function VelocityPlot({ velocity }: Props) {
 						y1={cx}
 						x2={tipX}
 						y2={tipY}
-						markerEnd="url(#velocity-arrow)"
+						markerEnd={`url(#${id}-arrow)`}
 					/>
+					{whatIf && (
+						<line
+							className="what-if-arrow"
+							x1={cx}
+							y1={cx}
+							x2={scale(whatIf.activity)}
+							y2={size - scale(whatIf.recovery)}
+							markerEnd={`url(#${id}-what-if)`}
+						/>
+					)}
 					<circle className="origin-dot" cx={cx} cy={cx} r={4} />
 
-					<text
-						className="value-label"
-						x={tipX}
-						y={velocity.recovery >= 0 ? cx - 10 : cx + 18}
-						textAnchor="middle"
-					>
-						{formatValue(velocity.activity)}
-					</text>
-					<text
-						className="value-label"
-						x={velocity.activity >= 0 ? cx - 8 : cx + 8}
-						y={tipY}
-						dy="0.32em"
-						textAnchor={velocity.activity >= 0 ? "end" : "start"}
-					>
-						{formatValue(velocity.recovery)}
-					</text>
+					{/* With a what-if arrow the labels crowd the tips. The numbers are in a table. */}
+					{!whatIf && (
+						<>
+							<text
+								className="value-label"
+								x={tipX}
+								y={velocity.recovery >= 0 ? cx - 10 : cx + 18}
+								textAnchor="middle"
+							>
+								{formatValue(velocity.activity)}
+							</text>
+							<text
+								className="value-label"
+								x={velocity.activity >= 0 ? cx - 8 : cx + 8}
+								y={tipY}
+								dy="0.32em"
+								textAnchor={velocity.activity >= 0 ? "end" : "start"}
+							>
+								{formatValue(velocity.recovery)}
+							</text>
+						</>
+					)}
 				</svg>
 			)}
 		</div>

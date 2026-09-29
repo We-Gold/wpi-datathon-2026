@@ -13,40 +13,39 @@ import { mulberry32 } from "./random";
 
 const formatDay = timeFormat("%Y-%m-%d");
 
-/** The landscape every mock subject gets, before per-subject jitter. */
+/** Legs the mock history path is split into. */
+const WAYPOINTS = 5;
+
+const cluster = (
+	activity: number,
+	recovery: number,
+	[sa, sb, sd]: [number, number, number],
+	kind: Cluster["kind"],
+): Cluster => ({
+	center: { activity, recovery },
+	covariance: [
+		[sa, sb],
+		[sb, sd],
+	],
+	kind,
+});
+
+/**
+ * The landscape every mock subject gets, before per-subject jitter. Healthy
+ * and unhealthy clusters overlap on purpose, so the map has ridges, saddles,
+ * and pits inside hills, not only separate peaks and valleys.
+ */
 const BASE_CLUSTERS: Cluster[] = [
-	{
-		center: { activity: 1.1, recovery: 0.9 },
-		covariance: [
-			[0.18, 0.04],
-			[0.04, 0.14],
-		],
-		kind: "healthy",
-	},
-	{
-		center: { activity: -0.1, recovery: 1.5 },
-		covariance: [
-			[0.45, 0],
-			[0, 0.3],
-		],
-		kind: "healthy",
-	},
-	{
-		center: { activity: 1.8, recovery: -1.1 },
-		covariance: [
-			[0.16, -0.05],
-			[-0.05, 0.22],
-		],
-		kind: "unhealthy",
-	},
-	{
-		center: { activity: -1.3, recovery: -0.7 },
-		covariance: [
-			[0.55, 0.1],
-			[0.1, 0.4],
-		],
-		kind: "unhealthy",
-	},
+	cluster(1.1, 0.9, [0.18, 0.04, 0.14], "healthy"),
+	cluster(-0.1, 1.5, [0.45, 0, 0.3], "healthy"),
+	cluster(2.1, 1.9, [0.1, -0.02, 0.12], "healthy"),
+	cluster(0.2, -0.3, [0.35, 0.15, 0.2], "healthy"),
+	cluster(-1.9, 1.9, [0.2, 0.08, 0.25], "healthy"),
+	cluster(1.8, -1.1, [0.16, -0.05, 0.22], "unhealthy"),
+	cluster(-1.3, -0.7, [0.55, 0.1, 0.4], "unhealthy"),
+	cluster(0.55, 0.45, [0.1, 0.02, 0.09], "unhealthy"),
+	cluster(-0.9, 0.7, [0.12, -0.04, 0.1], "unhealthy"),
+	cluster(0.3, -2.0, [0.4, 0, 0.15], "unhealthy"),
 ];
 
 /**
@@ -97,20 +96,32 @@ export function buildMockTrajectory(subjectId: string, seed: number, today = new
 	const clusters = jitterClusters(random);
 	const contributions = todaysContributions(random);
 
+	// The path visits a few clusters in turn, one leg each, like phases of life:
+	// a slump, a training block, a stressful month.
+	const waypoints: AxisVector[] = [];
+	while (waypoints.length < WAYPOINTS) {
+		const next = clusters[Math.floor(random() * clusters.length)].center;
+		if (next !== waypoints.at(-1)) waypoints.push(next);
+	}
+	const legDays = Math.ceil(HISTORY_DAYS / WAYPOINTS);
+
 	const history: TrajectoryDay[] = [];
 	let position: AxisVector = {
-		activity: -1.4 + random() * 0.6,
-		recovery: 0.2 + random() * 0.6,
+		activity: -1.6 + random() * 0.6,
+		recovery: -0.6 + random() * 0.6,
 	};
-	let velocity: AxisVector = { activity: 0.02, recovery: 0.01 };
+	let velocity: AxisVector = { activity: 0, recovery: 0 };
 	for (let i = HISTORY_DAYS - 1; i >= 0; i--) {
-		const noise = { activity: random() - 0.45, recovery: random() - 0.5 };
+		const day = HISTORY_DAYS - 1 - i;
+		const target = waypoints[Math.floor(day / legDays)];
+		const noise = { activity: random() - 0.5, recovery: random() - 0.5 };
+		// A damped spring toward the waypoint, a little underdamped so it curves.
 		velocity = add(
-			{ activity: velocity.activity * 0.85, recovery: velocity.recovery * 0.85 },
-			noise,
-			0.02,
+			{ activity: velocity.activity * 0.9, recovery: velocity.recovery * 0.9 },
+			add(target, position, -1),
+			0.006,
 		);
-		velocity = add(velocity, position, -0.004);
+		velocity = add(velocity, noise, 0.02);
 		if (i === 0) {
 			velocity = contributions.reduce<AxisVector>((sum, c) => add(sum, c), {
 				activity: 0,

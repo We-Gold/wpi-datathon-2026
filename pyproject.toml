@@ -20,6 +20,7 @@ dev = [
 notebook = [
     "altair>=5.4",
     "marimo>=0.9",
+    "vl-convert-python>=1.9.0.post1",
 ]
 model = [
     "numpy>=2.0",
