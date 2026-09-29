@@ -23,8 +23,10 @@ notebook = [
     "marimo>=0.9",
 ]
 model = [
+    "lightgbm>=4.5",
     "numpy>=2.0",
     "scikit-learn>=1.6",
+    "statsmodels>=0.14",
     "umap-learn>=0.5.7",
 ]
 
