@@ -20,7 +20,7 @@ export function MetricCard({ info, series, end }: Props) {
 	const formatValue = valueFormatter(info);
 
 	const stats = useMemo(() => {
-		const all = toDated(series.points, info.toDisplay);
+		const all = toDated(series.points);
 		const start = timeDay.offset(end, -DAILY_DAYS + 1);
 		const recent = all.filter((d) => d.date >= start && d.date <= end);
 		const today = recent.at(-1);
@@ -34,7 +34,7 @@ export function MetricCard({ info, series, end }: Props) {
 			headline: isToday ? today.value : undefined,
 			delta: isToday && usual !== undefined ? today.value - usual : undefined,
 		};
-	}, [series, info, end]);
+	}, [series, end]);
 
 	const tone = deltaTone(info, stats.delta);
 	const { rows } = stats;

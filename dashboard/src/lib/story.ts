@@ -1,18 +1,20 @@
-import { AXIS_LABELS, PREDICTION_DAYS, REGION_THRESHOLD, REGION_WORDS } from "../config";
+import { AXIS_LABELS, PREDICTION_DAYS, REGION_NAMES, REGION_THRESHOLD } from "../config";
 import type { Axis, AxisVector, Cluster, TrajectoryResponse } from "../types";
 import { heightAt } from "./terrain";
 
 const AXES: Axis[] = ["activity", "recovery"];
 
-/** A name for a place on the map, from which side of each axis it is on. */
+type Band = keyof typeof REGION_NAMES;
+
+function band(value: number): Band {
+	if (value > REGION_THRESHOLD) return "high";
+	if (value < -REGION_THRESHOLD) return "low";
+	return "middle";
+}
+
+/** A name for a place on the map, from which side of the usual level it is on each axis. */
 export function regionName(p: AxisVector): string {
-	const words = AXES.flatMap((axis) => {
-		if (p[axis] > REGION_THRESHOLD) return [REGION_WORDS[axis].high];
-		if (p[axis] < -REGION_THRESHOLD) return [REGION_WORDS[axis].low];
-		return [];
-	});
-	const name = words.length > 0 ? words.join(" and ") : REGION_WORDS.middle;
-	return name[0].toUpperCase() + name.slice(1);
+	return REGION_NAMES[band(p.activity)][band(p.recovery)];
 }
 
 /** Height of the tallest peak or deepest valley, so heights can be compared. */
@@ -53,7 +55,7 @@ export function buildStory({ history, prediction, clusters }: TrajectoryResponse
 	const scale = reliefScale(clusters);
 	const height = (p: AxisVector) => heightAt(clusters, p.activity, p.recovery) / scale;
 	const climb = height(end.position) - height(today.position);
-	const destination = regionName(end.position).toLowerCase();
+	const destination = regionName(end.position);
 	const headline =
 		climb > CLIMB
 			? `You are climbing toward healthier ground`
@@ -66,20 +68,6 @@ export function buildStory({ history, prediction, clusters }: TrajectoryResponse
 		a === r
 			? `Over the past week, ${AXIS_LABELS.activity.position} and ${AXIS_LABELS.recovery.position} both ${a}.`
 			: `Over the past week, ${AXIS_LABELS.activity.position} ${a} and ${AXIS_LABELS.recovery.position} ${r}.`;
-	const ahead = `In ${PREDICTION_DAYS} days the model expects you in ${destination} territory.`;
+	const ahead = `In ${PREDICTION_DAYS} days the model expects you in the “${destination}” area.`;
 	return { headline, dek: `${week} ${ahead}` };
-}
-
-/** Which way today pushed, in words, for the margin note. */
-export function pushSentence(v: AxisVector): string {
-	const [main, other] =
-		Math.abs(v.activity) >= Math.abs(v.recovery)
-			? (["activity", "recovery"] as const)
-			: (["recovery", "activity"] as const);
-	const label = (axis: Axis) => AXIS_LABELS[axis].position;
-	const dir = (axis: Axis) => (v[axis] >= 0 ? "more" : "less");
-	const lead = `Today pushed you toward ${dir(main)} ${label(main)}`;
-	return Math.abs(v[other]) > Math.abs(v[main]) * 0.5
-		? `${lead}, and a little toward ${dir(other)} ${label(other)}.`
-		: `${lead}.`;
 }

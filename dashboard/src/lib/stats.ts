@@ -40,6 +40,6 @@ export function periodChange(points: DatedValue[], end: Date, days: number) {
 	return { current, previous };
 }
 
-export function toDated(points: DailyPoint[], convert: (v: number) => number): DatedValue[] {
-	return points.map((p) => ({ date: parseDay(p.date), value: convert(p.value) }));
+export function toDated(points: DailyPoint[]): DatedValue[] {
+	return points.map((p) => ({ date: parseDay(p.date), value: p.value }));
 }

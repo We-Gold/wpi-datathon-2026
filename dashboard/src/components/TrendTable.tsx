@@ -20,7 +20,7 @@ export function TrendTable({ metrics, series, domain }: Props) {
 			metrics.flatMap((info) => {
 				const s = series.find((x) => x.metric === info.metric);
 				if (!s) return [];
-				const all = toDated(s.points, info.toDisplay);
+				const all = toDated(s.points);
 				const inRange = (d: { date: Date }) => d.date >= domain[0] && d.date <= domain[1];
 				const { current, previous } = periodChange(all, domain[1], SMOOTHING_DAYS);
 				return [

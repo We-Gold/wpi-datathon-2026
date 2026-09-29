@@ -1,13 +1,28 @@
-import { contours, Delaunay, format, geoIdentity, geoPath, max, scaleLinear, timeFormat } from "d3";
+import {
+	contours,
+	curveCatmullRom,
+	Delaunay,
+	format,
+	geoIdentity,
+	geoPath,
+	line,
+	max,
+	median,
+	scaleLinear,
+	timeFormat,
+} from "d3";
 import { type PointerEvent, useMemo, useState } from "react";
 import {
 	AXIS_LABELS,
 	CLUSTER_LABELS,
 	HISTORY_DAYS,
 	PREDICTION_DAYS,
-	VELOCITY_ARROW_DAYS,
+	REGION_NOTE,
+	TRAIL_OPACITY,
+	TRAIL_SMOOTHING_DAYS,
 	WHAT_IF_LABELS,
 } from "../config";
+import { smoothPath } from "../lib/shapes";
 import { parseDay } from "../lib/stats";
 import { regionName } from "../lib/story";
 import { heightAt, TERRAIN_STOPS, terrainColor } from "../lib/terrain";
@@ -31,10 +46,21 @@ const LEVELS = 9;
  */
 const EDGE_CELLS = 2;
 /**
- * How much wider than tall one data unit may be drawn. A little stretch lets
- * the terrain fill a wide page instead of leaving empty paper at the sides.
+ * How much more one axis may be stretched than the other. The axes measure
+ * different things, so equal units are not required. Some subjects move five
+ * times more on one axis, and without the stretch they fill a thin strip.
  */
-const MAX_STRETCH = 1.4;
+const MAX_STRETCH = 3;
+/** Room kept free inside each edge, so the today ring and labels are not cut off. */
+const FIT_PADDING = 28;
+/**
+ * The arrow's screen length. A day as big as the subject's typical day is
+ * drawn at `typical`. Bigger and smaller days scale from there, within limits,
+ * so one unusual day or subject never gives a huge or hidden arrow.
+ */
+const ARROW_PX = { min: 20, typical: 40, max: 84 };
+/** Width of the fade at the map's edges, so a hill that runs off the map fades out. */
+const EDGE_FADE = 24;
 /** Named places on the map, most prominent first. */
 const PEAK_LABELS = 3;
 const VALLEY_LABELS = 2;
@@ -44,6 +70,58 @@ const formatDate = timeFormat("%a %b %-d, %Y");
 const formatShortDate = timeFormat("%b %-d");
 const formatPosition = format("+.2f");
 const formatTick = format("~g");
+/** Smooth curve through the forecast and what-if points. */
+const curve = line<{ px: number; py: number }>()
+	.x((m) => m.px)
+	.y((m) => m.py)
+	.curve(curveCatmullRom.alpha(0.5));
+
+type Bounds = [x0: number, x1: number, y0: number, y1: number];
+
+/**
+ * Scales that fit the bounds inside the padded plot. Similar data units per
+ * pixel on both axes, so peaks keep a readable shape; the slack axis may
+ * stretch, up to MAX_STRETCH, to use the space.
+ */
+function fitScales([x0, x1, y0, y1]: Bounds, innerWidth: number, innerHeight: number) {
+	const fitX = (x1 - x0 || 1) / Math.max(1, innerWidth - 2 * FIT_PADDING);
+	const fitY = (y1 - y0 || 1) / Math.max(1, innerHeight - 2 * FIT_PADDING);
+	const unitsPerPx = Math.max(fitX, fitY);
+	const unitsPerPxX = fitX < unitsPerPx ? Math.max(fitX, unitsPerPx / MAX_STRETCH) : unitsPerPx;
+	const unitsPerPxY = fitY < unitsPerPx ? Math.max(fitY, unitsPerPx / MAX_STRETCH) : unitsPerPx;
+	const cx = (x0 + x1) / 2;
+	const cy = (y0 + y1) / 2;
+	const halfX = (unitsPerPxX * innerWidth) / 2;
+	const halfY = (unitsPerPxY * innerHeight) / 2;
+	return {
+		x: scaleLinear()
+			.domain([cx - halfX, cx + halfX])
+			.range([0, innerWidth]),
+		y: scaleLinear()
+			.domain([cy - halfY, cy + halfY])
+			.range([innerHeight, 0]),
+	};
+}
+
+/**
+ * How many data units of today's velocity make the arrow, given the scales.
+ * A day as big as the subject's typical day is drawn ARROW_PX.typical long.
+ */
+function arrowScaleFor(
+	history: TrajectoryResponse["history"],
+	velocity: AxisVector,
+	x: (v: number) => number,
+	y: (v: number) => number,
+) {
+	const screenLength = (v: AxisVector) => Math.hypot(x(v.activity) - x(0), y(v.recovery) - y(0));
+	const typical = median(history, (d) => screenLength(d.velocity)) || 1;
+	const length = screenLength(velocity);
+	const target = Math.min(
+		ARROW_PX.max,
+		Math.max(ARROW_PX.min, (ARROW_PX.typical * length) / typical),
+	);
+	return length > 0 ? target / length : 0;
+}
 
 interface MarkPoint {
 	date: string;
@@ -71,43 +149,45 @@ export function TerrainMap({ data, whatIf }: Props) {
 	const innerWidth = Math.max(0, width - MARGIN.left - MARGIN.right);
 	const innerHeight = height - MARGIN.top - MARGIN.bottom;
 
+	// Fit the paths: the trail, the prediction, and any what-if path shown.
+	// The terrain is the background and may run past the edges, where it fades.
+	// Fitting whole clusters, or everywhere a preset could reach, left some
+	// subjects' paths in a thin strip. The result is a string, so the terrain
+	// is only rebuilt when the bounds change, not for a what-if inside them.
+	const bounds = useMemo(() => {
+		const points = [
+			...data.history.map((d) => d.position),
+			...data.prediction.map((d) => d.position),
+			...(whatIf ?? []).map((d) => d.position),
+		];
+		const xs = points.map((p) => p.activity);
+		const ys = points.map((p) => p.recovery);
+		return [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)].join(",");
+	}, [data, whatIf]);
+
 	const map = useMemo(() => {
 		if (innerWidth <= 0) return null;
 		const { history, prediction, clusters } = data;
 		const today = history.at(-1);
 		if (!today) return null;
 
-		// Fit the trail, the prediction, and the body of every cluster.
-		const xs: number[] = [];
-		const ys: number[] = [];
-		for (const d of [...history, ...prediction]) {
-			xs.push(d.position.activity);
-			ys.push(d.position.recovery);
-		}
-		for (const c of clusters) {
-			const sx = 2 * Math.sqrt(c.covariance[0][0]);
-			const sy = 2 * Math.sqrt(c.covariance[1][1]);
-			xs.push(c.center.activity - sx, c.center.activity + sx);
-			ys.push(c.center.recovery - sy, c.center.recovery + sy);
-		}
-		let [x0, x1] = [Math.min(...xs), Math.max(...xs)];
-		let [y0, y1] = [Math.min(...ys), Math.max(...ys)];
-
-		// Nearly the same data units per pixel on both axes, so peaks keep their
-		// shape. The slack axis may stretch a little to use the space.
-		const fitX = ((x1 - x0) / innerWidth) * 1.05;
-		const fitY = ((y1 - y0) / innerHeight) * 1.05;
-		const unitsPerPx = Math.max(fitX, fitY);
-		const unitsPerPxX = fitX < unitsPerPx ? Math.max(fitX, unitsPerPx / MAX_STRETCH) : unitsPerPx;
-		const unitsPerPxY = fitY < unitsPerPx ? Math.max(fitY, unitsPerPx / MAX_STRETCH) : unitsPerPx;
-		const cx = (x0 + x1) / 2;
-		const cy = (y0 + y1) / 2;
-		x0 = cx - (unitsPerPxX * innerWidth) / 2;
-		x1 = cx + (unitsPerPxX * innerWidth) / 2;
-		y0 = cy - (unitsPerPxY * innerHeight) / 2;
-		y1 = cy + (unitsPerPxY * innerHeight) / 2;
-		const x = scaleLinear().domain([x0, x1]).range([0, innerWidth]);
-		const y = scaleLinear().domain([y0, y1]).range([innerHeight, 0]);
+		// Fit the paths, then make room for the arrow tip too. Its screen length
+		// depends on the scales, so it is measured on a first fit.
+		const pathBounds = bounds.split(",").map(Number) as Bounds;
+		const first = fitScales(pathBounds, innerWidth, innerHeight);
+		const k = arrowScaleFor(history, today.velocity, first.x, first.y);
+		const tipX = today.position.activity + today.velocity.activity * k;
+		const tipY = today.position.recovery + today.velocity.recovery * k;
+		const { x, y } = fitScales(
+			[
+				Math.min(pathBounds[0], tipX),
+				Math.max(pathBounds[1], tipX),
+				Math.min(pathBounds[2], tipY),
+				Math.max(pathBounds[3], tipY),
+			],
+			innerWidth,
+			innerHeight,
+		);
 
 		// Sample the height at cell centers, top row first.
 		const nx = Math.ceil(innerWidth / CELL) + 2 * EDGE_CELLS;
@@ -155,12 +235,17 @@ export function TerrainMap({ data, whatIf }: Props) {
 			px: x(d.position.activity),
 			py: y(d.position.recovery),
 		});
-		const past = history.map((d) => toMark(d, "past"));
-		const future = [toMark(today, "predicted"), ...prediction.map((d) => toMark(d, "predicted"))];
+		// Marks sit on the drawn, smoothed trail. Their values stay the real ones.
+		const past = smoothPath(
+			history.map((d) => toMark(d, "past")),
+			TRAIL_SMOOTHING_DAYS,
+		);
+		const todayMark = past[past.length - 1];
+		const future = [todayMark, ...prediction.map((d) => toMark(d, "predicted"))];
 
 		// Name the most prominent peaks and valleys, skipping any that would
 		// crowd another name, the path ends, or repeat a name already shown.
-		const taken = [past[past.length - 1], future[future.length - 1]].map((m) => ({
+		const taken = [todayMark, future[future.length - 1]].map((m) => ({
 			x: m.px,
 			y: m.py,
 		}));
@@ -190,6 +275,9 @@ export function TerrainMap({ data, whatIf }: Props) {
 			places.push({ name, px, py, kind });
 		}
 
+		// Today's direction, with a length set against the subject's own typical day.
+		const arrowScale = arrowScaleFor(history, today.velocity, x, y);
+
 		return {
 			x,
 			y,
@@ -198,13 +286,13 @@ export function TerrainMap({ data, whatIf }: Props) {
 			places,
 			past,
 			future,
-			today: past[past.length - 1],
+			today: todayMark,
 			arrowEnd: {
-				px: x(today.position.activity + today.velocity.activity * VELOCITY_ARROW_DAYS),
-				py: y(today.position.recovery + today.velocity.recovery * VELOCITY_ARROW_DAYS),
+				px: todayMark.px + (x(today.velocity.activity) - x(0)) * arrowScale,
+				py: todayMark.py + (y(today.velocity.recovery) - y(0)) * arrowScale,
 			},
 		};
-	}, [data, innerWidth, innerHeight]);
+	}, [data, bounds, innerWidth, innerHeight]);
 
 	// Kept apart from the terrain, so trying presets does not redraw the map.
 	const simulated = useMemo(
@@ -234,8 +322,8 @@ export function TerrainMap({ data, whatIf }: Props) {
 		setHovered(close ? nearest : null);
 	}
 
-	const futurePath = map?.future.map((m) => `${m.px},${m.py}`).join("L");
-	const whatIfPath = simulated.map((m) => `${m.px},${m.py}`).join("L");
+	const futurePath = map ? (curve(map.future) ?? "") : "";
+	const whatIfPath = curve(simulated) ?? "";
 	const whatIfEnd = simulated.at(-1);
 
 	return (
@@ -252,6 +340,26 @@ export function TerrainMap({ data, whatIf }: Props) {
 							<clipPath id="terrain-clip">
 								<rect width={innerWidth} height={innerHeight} />
 							</clipPath>
+							<filter
+								id="terrain-fade-blur"
+								filterUnits="userSpaceOnUse"
+								x={0}
+								y={0}
+								width={innerWidth}
+								height={innerHeight}
+							>
+								<feGaussianBlur stdDeviation={EDGE_FADE / 2} />
+							</filter>
+							<mask id="terrain-fade">
+								<rect
+									x={EDGE_FADE}
+									y={EDGE_FADE}
+									width={Math.max(0, innerWidth - 2 * EDGE_FADE)}
+									height={Math.max(0, innerHeight - 2 * EDGE_FADE)}
+									fill="white"
+									filter="url(#terrain-fade-blur)"
+								/>
+							</mask>
 							<marker
 								id="terrain-arrow"
 								viewBox="0 0 10 10"
@@ -276,14 +384,17 @@ export function TerrainMap({ data, whatIf }: Props) {
 
 						<g transform={`translate(${MARGIN.left},${MARGIN.top})`}>
 							<g clipPath="url(#terrain-clip)">
-								{map.bands.map((b) => (
-									<path key={b.value} d={b.d} fill={b.fill} className="contour" />
-								))}
+								<g mask="url(#terrain-fade)">
+									{map.bands.map((b) => (
+										<path key={b.value} d={b.d} fill={b.fill} className="contour" />
+									))}
+								</g>
 
 								{map.past.slice(1).map((m, i) => {
 									const prev = map.past[i];
-									// Older segments fade but stay readable. The newest is fully opaque.
+									// Older segments fade out quickly. Only recent weeks are strong.
 									const age = (map.past.length - 2 - i) / HISTORY_DAYS;
+									const recency = (1 - Math.min(1, age)) ** 2;
 									return (
 										<line
 											key={m.date}
@@ -292,11 +403,14 @@ export function TerrainMap({ data, whatIf }: Props) {
 											y1={prev.py}
 											x2={m.px}
 											y2={m.py}
-											strokeOpacity={0.2 + 0.8 * (1 - age)}
+											strokeOpacity={
+												TRAIL_OPACITY.oldest +
+												(TRAIL_OPACITY.newest - TRAIL_OPACITY.oldest) * recency
+											}
 										/>
 									);
 								})}
-								<path className="prediction" d={`M${futurePath}`} />
+								<path className="prediction" d={futurePath} />
 								<circle
 									className="prediction-end"
 									cx={map.future.at(-1)?.px}
@@ -306,7 +420,7 @@ export function TerrainMap({ data, whatIf }: Props) {
 
 								{whatIfEnd && (
 									<>
-										<path className="what-if-path" d={`M${whatIfPath}`} />
+										<path className="what-if-path" d={whatIfPath} />
 										<circle className="what-if-end" cx={whatIfEnd.px} cy={whatIfEnd.py} r={5} />
 									</>
 								)}
@@ -410,8 +524,8 @@ export function TerrainMap({ data, whatIf }: Props) {
 					<svg width="28" height="10" aria-hidden="true">
 						<defs>
 							<linearGradient id="legend-fade">
-								<stop offset="0" stopOpacity="0.2" stopColor="currentColor" />
-								<stop offset="1" stopOpacity="1" stopColor="currentColor" />
+								<stop offset="0" stopOpacity={TRAIL_OPACITY.oldest} stopColor="currentColor" />
+								<stop offset="1" stopOpacity={TRAIL_OPACITY.newest} stopColor="currentColor" />
 							</linearGradient>
 						</defs>
 						<rect
@@ -437,8 +551,9 @@ export function TerrainMap({ data, whatIf }: Props) {
 							markerEnd="url(#terrain-arrow)"
 						/>
 					</svg>
-					Today's velocity, {VELOCITY_ARROW_DAYS} days long
+					Today's direction, longer on a bigger day than usual
 				</li>
+				<li>{REGION_NOTE}</li>
 				{whatIfEnd && (
 					<li>
 						<svg width="28" height="10" aria-hidden="true">

@@ -1,12 +1,16 @@
 import { format } from "d3";
-import { AXIS_LABELS, SCENARIO_LABELS, WHAT_IF_LABELS } from "../config";
-import type { ScenarioKey } from "../lib/scenarios";
-import type { Axis, AxisVector } from "../types";
+import { AXIS_LABELS, PERSISTENCE_LABELS, SCENARIO_LABELS, WHAT_IF_LABELS } from "../config";
+import { isUsable, type Persistence, type ScenarioKey } from "../lib/scenarios";
+import type { Axis, AxisVector, Scaling } from "../types";
 
 interface Props {
 	active: ScenarioKey[];
 	onToggle: (key: ScenarioKey) => void;
 	onReset: () => void;
+	persistence: Persistence;
+	onPersistence: (next: Persistence) => void;
+	/** The subject's feature spreads. A preset with no matching data is disabled. */
+	scaling: Scaling;
 	/** Today's real velocity. */
 	velocity: AxisVector;
 	/** Today's velocity with the presets applied. */
@@ -14,14 +18,24 @@ interface Props {
 }
 
 const KEYS = Object.keys(SCENARIO_LABELS) as ScenarioKey[];
+const PERSISTENCE = Object.keys(PERSISTENCE_LABELS) as Persistence[];
 const AXES: Axis[] = ["activity", "recovery"];
 const formatValue = format("+.3f");
 
 /**
- * Lets a person try changes to today and see where they lead. Nothing here
- * touches the real data or the model's prediction.
+ * Lets a person try changes to today, once or as a habit, and see where they
+ * lead. Nothing here touches the real data or the model's prediction.
  */
-export function WhatIfPanel({ active, onToggle, onReset, velocity, simulated }: Props) {
+export function WhatIfPanel({
+	active,
+	onToggle,
+	onReset,
+	persistence,
+	onPersistence,
+	scaling,
+	velocity,
+	simulated,
+}: Props) {
 	const on = active.length > 0;
 	return (
 		<section className="note what-if" aria-labelledby="what-if-title">
@@ -31,16 +45,36 @@ export function WhatIfPanel({ active, onToggle, onReset, velocity, simulated }: 
 			</header>
 			<fieldset className="presets">
 				<legend className="visually-hidden">Changes to today</legend>
-				{KEYS.map((key) => (
-					<button
-						key={key}
-						type="button"
-						className="pill"
-						aria-pressed={active.includes(key)}
-						onClick={() => onToggle(key)}
-					>
-						{SCENARIO_LABELS[key]}
-					</button>
+				{KEYS.map((key) => {
+					const usable = isUsable(key, scaling);
+					return (
+						<button
+							key={key}
+							type="button"
+							className="pill"
+							aria-pressed={usable && active.includes(key)}
+							disabled={!usable}
+							title={usable ? undefined : WHAT_IF_LABELS.noData}
+							onClick={() => onToggle(key)}
+						>
+							{SCENARIO_LABELS[key]}
+						</button>
+					);
+				})}
+			</fieldset>
+			<fieldset className="segmented segmented-fill">
+				<legend className="visually-hidden">How long the change lasts</legend>
+				{PERSISTENCE.map((p) => (
+					<label key={p} className={p === persistence ? "active" : undefined}>
+						<input
+							type="radio"
+							name="persistence"
+							value={p}
+							checked={p === persistence}
+							onChange={() => onPersistence(p)}
+						/>
+						{PERSISTENCE_LABELS[p]}
+					</label>
 				))}
 			</fieldset>
 

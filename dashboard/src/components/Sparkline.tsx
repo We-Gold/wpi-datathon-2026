@@ -25,7 +25,9 @@ export function Sparkline({ daily, smoothed, domain, label, formatValue }: Props
 		const x = scaleTime()
 			.domain(domain)
 			.range([PAD, Math.max(PAD, width - PAD)]);
-		const [lo = 0, hi = 1] = extent(daily, (d) => d.value);
+		// The 7-day average near the left edge includes days before the window,
+		// so it can sit outside the daily values. Fit both.
+		const [lo = 0, hi = 1] = extent([...daily, ...smoothed], (d) => d.value);
 		const y = scaleLinear()
 			.domain([lo, hi === lo ? lo + 1 : hi])
 			.range([HEIGHT - PAD, PAD]);

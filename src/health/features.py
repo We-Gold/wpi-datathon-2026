@@ -126,12 +126,47 @@ def _daily_scalar(records: pl.DataFrame, feature: Feature) -> pl.DataFrame:
     )
 
 
+def _merge_intervals(frame: pl.DataFrame) -> pl.DataFrame:
+    """Merge overlapping or touching intervals, separately per subject."""
+    previous_end = pl.col("end_local").cum_max().shift(1).over("subject_id", order_by="start_local")
+    return (
+        frame.sort("subject_id", "start_local")
+        .with_columns(
+            (previous_end.is_null() | (pl.col("start_local") > previous_end))
+            .cum_sum()
+            .over("subject_id", order_by="start_local")
+            .alias("block")
+        )
+        .group_by("subject_id", "block")
+        .agg(pl.col("start_local").min(), pl.col("end_local").max())
+    )
+
+
+def _seconds_by_night(intervals: pl.DataFrame, name: str) -> pl.DataFrame:
+    """Total merged seconds per noon-to-noon night."""
+    return (
+        _merge_intervals(intervals)
+        .with_columns(
+            (pl.col("start_local") - pl.duration(hours=12)).dt.date().alias("date"),
+            (pl.col("end_local") - pl.col("start_local")).dt.total_seconds().alias("seconds"),
+        )
+        .group_by("subject_id", "date")
+        .agg(pl.col("seconds").sum().alias(name))
+    )
+
+
 def _sleep_features(records: pl.DataFrame) -> pl.DataFrame:
     """Build duration and efficiency, preferring a source's daily rollup.
 
     Stage intervals count asleep time only; the containing ``InBed`` interval
     is excluded to avoid double counting.  Efficiency is available only when
     both asleep and awake stage intervals were recorded.
+
+    Several sources (a watch, a phone, a sleep app) often record the same night,
+    so intervals are merged before they are summed. Asleep time is the union of
+    every asleep interval. Awake time is the rest of the union of asleep and
+    awake intervals, so a minute one source calls awake and another asleep
+    counts as asleep once.
     """
     rolled = (
         records.filter(
@@ -153,18 +188,19 @@ def _sleep_features(records: pl.DataFrame) -> pl.DataFrame:
             }
         )
     else:
+        stages = sleep.with_columns(
+            pl.col("value_str").cast(pl.String).str.contains("Asleep").alias("asleep"),
+            pl.col("value_str").cast(pl.String).str.ends_with("Awake").alias("awake"),
+        ).select("subject_id", "start_local", "end_local", "asleep", "awake")
+        asleep = _seconds_by_night(stages.filter(pl.col("asleep")), "asleep_seconds")
+        either = _seconds_by_night(
+            stages.filter(pl.col("asleep") | pl.col("awake")), "recorded_seconds"
+        )
         staged = (
-            sleep.with_columns(
-                (pl.col("start_local") - pl.duration(hours=12)).dt.date().alias("date"),
-                ((pl.col("end_local") - pl.col("start_local")).dt.total_seconds()).alias("seconds"),
-                pl.col("value_str").cast(pl.String).str.contains("Asleep").alias("asleep"),
-                pl.col("value_str").cast(pl.String).str.ends_with("Awake").alias("awake"),
-            )
-            .filter(pl.col("asleep") | pl.col("awake"))
-            .group_by("subject_id", "date")
-            .agg(
-                pl.col("seconds").filter(pl.col("asleep")).sum().alias("asleep_seconds"),
-                pl.col("seconds").filter(pl.col("awake")).sum().alias("awake_seconds"),
+            either.join(asleep, on=["subject_id", "date"], how="left")
+            .with_columns(pl.col("asleep_seconds").fill_null(0))
+            .with_columns(
+                (pl.col("recorded_seconds") - pl.col("asleep_seconds")).alias("awake_seconds")
             )
             .with_columns(
                 (pl.col("asleep_seconds") / 3600).alias("staged_hours"),
@@ -444,27 +480,42 @@ def add_interpretable_axes(daily: pl.DataFrame) -> pl.DataFrame:
     range, then direction-aligned and averaged.  The axes therefore mean
     "above or below this person's usual level", not population fitness.
     """
+    result = add_axis_components(daily)
+    for axis, definitions in AXIS_FEATURES.items():
+        available = [name for name in definitions if name in daily.columns]
+        components = [axis_component_name(axis, name) for name in available]
+        result = result.with_columns(
+            pl.mean_horizontal(*components).alias(f"{axis}_score"),
+            pl.mean_horizontal(
+                *(pl.col(name).is_not_null().cast(pl.Float64) for name in available)
+            ).alias(f"{axis}_coverage"),
+        ).drop(components)
+    return result
+
+
+def axis_component_name(axis: str, feature: str) -> str:
+    return f"{axis}__{feature}"
+
+
+def add_axis_components(daily: pl.DataFrame) -> pl.DataFrame:
+    """Add each axis ingredient as a signed, per-subject robust z-score.
+
+    A score is the mean of its non-null components, so dividing a component
+    by that day's count gives its exact share of the score.
+    """
     result = daily
     for axis, definitions in AXIS_FEATURES.items():
-        available = {name: sign for name, sign in definitions.items() if name in result.columns}
-        standardized: list[str] = []
-        for name, sign in available.items():
-            temp = f"__{axis}_{name}"
+        for name, sign in definitions.items():
+            if name not in result.columns:
+                continue
             median = pl.col(name).median().over("subject_id")
             iqr = (pl.col(name).quantile(0.75) - pl.col(name).quantile(0.25)).over("subject_id")
             result = result.with_columns(
                 pl.when(iqr > 0)
                 .then(sign * (pl.col(name) - median) / iqr)
                 .otherwise(None)
-                .alias(temp)
+                .alias(axis_component_name(axis, name))
             )
-            standardized.append(temp)
-        result = result.with_columns(
-            pl.mean_horizontal(*standardized).alias(f"{axis}_score"),
-            pl.mean_horizontal(
-                *(pl.col(name).is_not_null().cast(pl.Float64) for name in available)
-            ).alias(f"{axis}_coverage"),
-        ).drop(standardized)
     return result
 
 

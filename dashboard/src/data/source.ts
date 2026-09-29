@@ -1,18 +1,24 @@
-import type { DashboardData, TrajectoryResponse } from "../types";
-import { buildMockData } from "./mock";
-import { buildMockTrajectory } from "./mockTrajectory";
+import type { DashboardIndex, SubjectData } from "../types";
 
 /*
- * The only places the dashboard gets data from. Both return mock data for now.
- * When the FastAPI server in src/ exists, these become fetches against it and
- * nothing that calls them has to change.
+ * The only places the dashboard gets data from. The files are written by
+ * `uv run health-export` into public/data/, which is gitignored.
  */
 
-export async function loadDashboardData(): Promise<DashboardData> {
-	return buildMockData();
+const DATA_URL = `${import.meta.env.BASE_URL}data/`;
+
+async function getJson<T>(path: string): Promise<T> {
+	const response = await fetch(`${DATA_URL}${path}`);
+	if (!response.ok) {
+		throw new Error(`Could not load ${path} (${response.status}). Run \`uv run health-export\`.`);
+	}
+	return response.json() as Promise<T>;
 }
 
-export async function loadTrajectory(subjectId: string): Promise<TrajectoryResponse> {
-	const seed = [...subjectId].reduce((sum, ch) => sum + ch.charCodeAt(0), 0);
-	return buildMockTrajectory(subjectId, seed);
+export function loadIndex(): Promise<DashboardIndex> {
+	return getJson("index.json");
+}
+
+export function loadSubject(subjectId: string): Promise<SubjectData> {
+	return getJson(`subjects/${encodeURIComponent(subjectId)}.json`);
 }
