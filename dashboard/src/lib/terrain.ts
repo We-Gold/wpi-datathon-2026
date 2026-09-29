@@ -22,8 +22,11 @@ export function heightAt(clusters: Cluster[], activity: number, recovery: number
 	return height;
 }
 
-/** Stops from deep valley, through neutral ground, to high peak. */
-export const TERRAIN_STOPS = ["#7890a0", "#c3cfd3", "#f5f1e8", "#efc69c", "#cf7a3e"];
+/**
+ * Stops from deep valley, through neutral ground, to high peak. Neutral ground
+ * matches --page, so the map has no visible edge.
+ */
+export const TERRAIN_STOPS = ["#b8433a", "#e3988a", "#f3efe6", "#c4d5e3", "#5a86b0"];
 
 export function terrainColor(maxAbs: number) {
 	return scaleDiverging(piecewise(interpolateLab, TERRAIN_STOPS)).domain([-maxAbs, 0, maxAbs]);

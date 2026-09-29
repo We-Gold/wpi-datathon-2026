@@ -8,6 +8,8 @@ import polars as pl
 from health.embeddings import (
     MaskedStandardizer,
     PCAEmbedding,
+    fit_tsne,
+    fit_umap,
     reconstruction_metrics,
     temporal_split,
 )
@@ -47,3 +49,11 @@ def test_pca_scores_only_observed_cells() -> None:
     scores = reconstruction_metrics(daily, model.preprocessor, model.reconstruct(daily))
     assert scores["observed_cells"] == 38
     assert cast(float, scores["rmse_standardized"]) >= 0
+
+
+def test_umap_and_tsne_return_two_dimensional_visualization_coordinates() -> None:
+    daily = _daily()
+    umap_values = fit_umap(daily, ["one", "two"], neighbors=5)
+    tsne_values = fit_tsne(daily, ["one", "two"], perplexity=3)
+    assert umap_values.shape == (20, 2)
+    assert tsne_values.shape == (20, 2)

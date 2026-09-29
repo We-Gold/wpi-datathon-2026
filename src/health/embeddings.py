@@ -13,6 +13,7 @@ from dataclasses import dataclass
 import numpy as np
 import polars as pl
 from sklearn.decomposition import PCA
+from sklearn.manifold import TSNE
 from sklearn.neural_network import MLPRegressor
 
 
@@ -169,6 +170,69 @@ class DenoisingAutoencoder:
 
     def reconstruct(self, frame: pl.DataFrame) -> np.ndarray:
         return self.model.predict(self.preprocessor.transform(frame, include_mask=True))
+
+
+def fit_umap(
+    frame: pl.DataFrame,
+    features: list[str],
+    *,
+    dimensions: int = 2,
+    neighbors: int = 15,
+    min_dist: float = 0.1,
+    random_state: int = 0,
+) -> np.ndarray:
+    """Fit UMAP for exploratory visualization on a complete daily table.
+
+    Unlike PCA, UMAP and t-SNE do not provide a stable out-of-sample transform
+    for this workflow. The caller should fit them on the selected visualization
+    period only and must not use them as the held-out forecasting baseline.
+    """
+    try:
+        import umap
+    except ImportError as error:  # pragma: no cover - exercised without model extras
+        raise ImportError("UMAP requires the optional `model` dependency group") from error
+
+    preprocessor = MaskedStandardizer.fit(frame, features)
+    matrix = preprocessor.transform(frame)
+    if matrix.shape[0] < 3:
+        raise ValueError("UMAP needs at least three rows")
+    reducer = umap.UMAP(
+        n_components=dimensions,
+        n_neighbors=min(neighbors, matrix.shape[0] - 1),
+        min_dist=min_dist,
+        metric="euclidean",
+        random_state=random_state,
+    )
+    return reducer.fit_transform(matrix)
+
+
+def fit_tsne(
+    frame: pl.DataFrame,
+    features: list[str],
+    *,
+    dimensions: int = 2,
+    perplexity: float = 30.0,
+    random_state: int = 0,
+) -> np.ndarray:
+    """Fit t-SNE for exploratory visualization on a complete daily table.
+
+    t-SNE emphasizes local neighborhoods and does not preserve global distances.
+    Its coordinates are therefore useful for inspecting clusters, not for
+    comparing trajectory distances or evaluating next-day prediction.
+    """
+    preprocessor = MaskedStandardizer.fit(frame, features)
+    matrix = preprocessor.transform(frame)
+    if matrix.shape[0] < 3:
+        raise ValueError("t-SNE needs at least three rows")
+    bounded_perplexity = min(perplexity, max(2.0, (matrix.shape[0] - 1) / 3))
+    return TSNE(
+        n_components=dimensions,
+        perplexity=bounded_perplexity,
+        init="pca",
+        learning_rate="auto",
+        max_iter=1000,
+        random_state=random_state,
+    ).fit_transform(matrix)
 
 
 def reconstruction_metrics(

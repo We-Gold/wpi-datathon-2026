@@ -8,12 +8,14 @@ clinical recovery.
 
 | Issue item | Decision |
 |---|---|
-| Feature set | Start with five cross-source core signals: steps, walking/running distance, exercise time, resting heart rate, and sleep duration. Keep richer cardiac, energy, sleep, and spectral signals as candidates and retain candidates with at least 30% coverage in training data. |
+| Feature set | Use the three signals represented in every source format as the shared core: steps, sleep duration, and sampled heart rate. Keep richer cardiac, energy, activity, sleep, and spectral signals as candidates and retain candidates with at least 30% coverage in training data. “Represented” does not mean observed every day; daily availability remains explicit. |
 | Missing values | Preserve nulls in the feature artifact. Within each temporal training split, median-impute and standardize per subject. Carry an observed/missing mask into the neural model. Score reconstructions only where a real value was observed. Never treat an absent sensor value as zero. |
-| Temporal aggregation | Use sums for cumulative measurements and means for sampled levels. Label sleep by a noon-to-noon day so a night crossing midnight stays together. For heart rate, add daily mean, standard deviation and range. Compute FFT features only with at least 48 of 96 15-minute bins and a 12-hour observed span. |
+| Temporal aggregation | Use sums for cumulative measurements and means for sampled levels. Label sleep by a noon-to-noon day so a night crossing midnight stays together. For heart rate, add daily mean, standard deviation, range, 10th percentile, sample count, and coefficient of variation. Compute FFT features only with at least 48 of 96 15-minute bins and a 12-hour observed span. |
+| Smoothing | Preserve every raw daily feature and add trailing 7- and 28-calendar-day means for shared signals and interpretable axes. Require at least 3 and 7 real observations respectively, never replace missing days with zero, and use only today and earlier days. Resting-HR change is the 7-day mean minus the 28-day baseline. |
 | Feature-rich periods | For each subject, find the longest interval whose trailing 30-day windows average at least 60% completeness over the core set. If no interval qualifies, retain the best 30-day diagnostic window and mark `meets_threshold=false`; do not silently drop that subject. |
 | PCA evaluation | Hold out the latest 20% of each subject's selected interval. Fit feature selection, imputation, scaling, and PCA on earlier days only. Report explained variance plus held-out RMSE/MAE on observed cells, overall and per feature. |
 | Neural embedding | Compare PCA to a small denoising autoencoder with the same temporal split and observed-cell metrics. It receives the missingness mask and randomly masks observed inputs during training. It is a feasibility benchmark, not the final model. |
+| Exploratory projections | Add UMAP and t-SNE to the visualization artifact for cluster inspection. Fit them on the selected visualization period only; do not interpret their global distances or use them for held-out prediction metrics. |
 | Interpretable axes | Activity and recovery are predefined composites of direction-aligned, per-person robust z-scores. They are kept separate from learned embeddings so their meaning does not rotate when a model is refit. |
 
 ## Activity and recovery axes
@@ -29,6 +31,22 @@ subject's median in this dataset. It does not mean healthier than another
 person, and it is not a medical recommendation. The equal weighting is
 deliberately legible; learned or outcome-calibrated weights should only replace
 it after an outcome and validation protocol are agreed.
+
+## Heart-rate variability and resting trends
+
+`hrv_sdnn_ms` is used only when a source provides a real HRV measurement.
+True HRV is computed from beat-to-beat RR intervals; it cannot be recovered
+reliably from occasional or already-averaged BPM samples. The cross-dataset
+`hr_daily_cv` feature is therefore labelled as a daily heart-rate variability
+**proxy**, not HRV. It is the standard deviation of sampled BPM divided by its
+daily mean and is sensitive to sampling density, exercise, and device changes.
+
+For a resting-like signal common to the datasets, `hr_p10_bpm` uses the daily
+10th percentile when at least ten HR samples exist. It is also explicitly a
+proxy. Where the device provides true resting heart rate, the pipeline retains
+`resting_hr_bpm`. Both receive 7- and 28-day trailing means; their change
+features subtract the 28-day baseline from the 7-day trend. Positive change
+means recent heart rate is above the longer personal baseline.
 
 ## Why an embedding instead of one trend per metric?
 
@@ -79,6 +97,31 @@ uv sync --all-groups
 uv run health-model
 ```
 
+## Time-series prediction baseline
+
+The forecasting scaffold turns the daily activity/recovery axes into an
+honest next-day prediction task:
+
+```bash
+uv run health-forecast
+```
+
+It writes `forecast_predictions.parquet` and `forecast_evaluation.json` to
+`data/model/`. Missing calendar days are inserted as nulls per subject, and
+features are represented by causal lags (0, 1, 2, 3, 7, 14 and 28 days). The
+holdout is the latest 20% of each subject's timeline, so future labels cannot
+leak into training. Persistence, weekly seasonal persistence, a short rolling
+mean, Ridge, LightGBM, and ElasticNet are reported for both `activity_score`
+and `recovery_score`.
+
+The active-heart-rate feature is a transparent proxy: samples above each
+subject's daily 75th percentile are treated as active, while resting heart
+rate and HRV remain separate recovery signals. This is a baseline contract for
+the dashboard, not yet an action-conditioned causal model. The next model
+should add intervention features (for example, planned steps or sleep target),
+rolling-origin evaluation, and uncertainty intervals before replacing these
+baselines with a GRU or transformer.
+
 This writes gitignored artifacts under `data/model/`:
 
 - `daily_features.parquet`: selected daily rows, missingness, axis values and coverage;
@@ -91,15 +134,19 @@ After generating the artifacts, open the interactive visual report:
 uv run marimo edit --watch --no-token notebooks/embeddings.py
 ```
 
-It includes PCA/autoencoder trajectories, activity-versus-recovery movement,
+It includes raw, 7-day, or 28-day PCA, autoencoder, UMAP, and t-SNE trajectories,
+activity-versus-recovery movement,
 the PCA scree chart and loading heatmap, per-feature held-out errors, and a
-core-feature availability timeline.
+core-feature availability timeline. The embedding picker also includes UMAP
+and t-SNE for exploratory cluster inspection, and the time-series picker lets
+you inspect raw or smoothed shared signals and heart-rate changes directly.
 
 The current local four-subject dataset is only a pipeline smoke test. On the
-2026-09-16 run, PCA's first three components explained about 63% of training
-variance. Held-out standardized RMSE was 0.730 for PCA and 0.703 for the
-autoencoder. That small improvement supports further testing, not adoption of
-the neural model.
+2026-09-16 run with the shared steps/sleep/HR window, all four subjects met the
+60% threshold and 2,604 subject-days were retained. PCA's first three
+components explained about 62% of training variance. Held-out standardized
+RMSE was 0.700 for PCA and 0.658 for the autoencoder. That roughly 6%
+improvement supports further testing, not adoption of the neural model.
 
 ## Branch audit
 
