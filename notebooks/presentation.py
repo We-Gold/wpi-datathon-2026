@@ -6,6 +6,8 @@ app = marimo.App(width="medium")
 
 @app.cell
 def _():
+    import textwrap
+    from collections import Counter
     from pathlib import Path
 
     import altair as alt
@@ -14,7 +16,7 @@ def _():
 
     from health.cli import OUTPUT_DIR
 
-    return OUTPUT_DIR, Path, alt, mo, pl
+    return Counter, OUTPUT_DIR, Path, alt, mo, pl, textwrap
 
 
 @app.cell
@@ -180,7 +182,7 @@ def _(everything, pl):
         .sort("tracked", descending=True)
     )
     richness
-    return MIN_DAYS, richness
+    return MIN_DAYS, per_subject, richness
 
 
 @app.cell
@@ -237,7 +239,239 @@ def _(MIN_DAYS, alt, richness):
 
 
 @app.cell
-def export_figures(ROOT, kaggle_json_table_chart, mo, richness_chart):
+def _(mo):
+    mo.md("""
+    ## Comparing the three data sources
+
+    One card per source: where it comes from, a few numbers, and what it is good
+    and bad at. The numbers come from the processed data. The text lives in
+    `SOURCE_CARDS` in the chart cell, so edit the wording there.
+    """)
+    return
+
+
+@app.cell
+def source_stats(everything, per_subject, pl):
+    SOURCE_GROUPS = {
+        "flat_csv": "Kaggle",
+        "nested_json": "Kaggle",
+        "apple_xml": "Personal",
+        "pmdata": "PMData",
+    }
+
+    # One row per person, joined to the metric counts from the richness section so
+    # both figures agree on what "tracked" means.
+    source_stats = (
+        everything.group_by("subject_id", "source_format")
+        .agg(
+            pl.len().alias("records"),
+            (pl.col("start_local").max() - pl.col("start_local").min())
+            .dt.total_days()
+            .alias("days_covered"),
+        )
+        .collect()
+        .join(per_subject.select("subject_id", "tracked"), on="subject_id")
+        .with_columns(
+            pl.col("source_format").cast(pl.String).replace_strict(SOURCE_GROUPS).alias("source")
+        )
+        .sort("source", "subject_id")
+    )
+    source_stats
+    return (source_stats,)
+
+
+@app.cell
+def source_comparison(Counter, alt, pl, source_stats, textwrap):
+    SOURCE_CARDS = {
+        "Kaggle": {
+            "color": "#d1495b",
+            "role": "The public data we started from",
+            "context": (
+                "Two Apple Health exports that anonymous users shared on Kaggle. "
+                "One is a flat CSV and the other a nested JSON file, each from a "
+                "different person."
+            ),
+            "device": "iPhone and wearables",
+            "strength": "Real exports from outside our team",
+            "limit": "Few signals, so little to learn from",
+        },
+        "Personal": {
+            "color": "#30638e",
+            "role": "Our own Apple Health exports",
+            "context": (
+                "Full Apple Health exports from two team members, covering phone, "
+                "watch and scale data. We exported them as XML for this project."
+            ),
+            "device": "iPhone, watch and scale",
+            "strength": "The richest and longest records",
+            "limit": "Only two people",
+        },
+        "PMData": {
+            "color": "#00798c",
+            "role": "A research cohort with self-reports",
+            "context": (
+                "A public sports logging dataset from Simula Research Laboratory "
+                "in Norway (ACM MMSys 2020). 16 people wore a Fitbit from Nov 2019 "
+                "to Mar 2020 and logged mood, stress, soreness, training load and "
+                "injuries in the PMSys app."
+            ),
+            "device": "Fitbit and PMSys app",
+            "strength": "Many people on one protocol, plus wellness labels",
+            "limit": "Five months only, and one device type",
+        },
+    }
+
+    _W, _PAD, _WRAP = 330, 22, 44
+    _TICK_MAX = 30
+
+
+    def _count(n):
+        return f"{n / 1e6:.2f}M" if n >= 1e6 else f"{n / 1e3:.0f}K"
+
+
+    def _per_person(values, fmt=str):
+        # Two people read as "a and b". A cohort reads as a range.
+        values = sorted(values, reverse=True)
+        if len(values) <= 2:
+            return " and ".join(fmt(v) for v in values)
+        return f"{fmt(values[-1])} to {fmt(values[0])}"
+
+
+    def _lines(text):
+        return textwrap.fill(text, _WRAP).count("\n") + 1
+
+
+    # Every card reserves the same height for each section, so the stats, the
+    # tradeoffs and the strip sit at the same height in all three cards.
+    _BODY_LINES = max(_lines(s["context"]) for s in SOURCE_CARDS.values())
+    _PRO_LINES = max(_lines(f"+ {s['strength']}") + _lines(f"- {s['limit']}") for s in SOURCE_CARDS.values())
+    _DOT = 12
+    _STACK = max(
+        max(Counter(source_stats.filter(pl.col("source") == n)["tracked"]).values())
+        for n in SOURCE_CARDS
+    )
+
+
+    def _layout(name):
+        spec = SOURCE_CARDS[name]
+        rows = source_stats.filter(pl.col("source") == name)
+        texts = {"title": [], "role": [], "body": [], "label": [], "value": [], "note": []}
+        y = 26
+        texts["title"].append({"x": _PAD, "y": y, "t": name})
+        y += 32
+        texts["role"].append({"x": _PAD, "y": y, "t": spec["role"]})
+        y += 30
+        _body = textwrap.fill(spec["context"], _WRAP)
+        texts["body"].append({"x": _PAD, "y": y, "t": _body})
+        y += 18 * _BODY_LINES + 18
+
+        _stats = [
+            ("People", str(rows.height)),
+            ("Days per person", _per_person(rows["days_covered"], lambda v: f"{v:,}")),
+            ("Records per person", _per_person(rows["records"], _count)),
+            ("Metrics on 30+ days", _per_person(rows["tracked"])),
+            ("Device", spec["device"]),
+        ]
+        _rules = [{"x": _PAD, "x2": _W - _PAD, "y": y - 8}]
+        for _label, _value in _stats:
+            texts["label"].append({"x": _PAD, "y": y, "t": _label})
+            texts["value"].append({"x": _W - _PAD, "y": y, "t": _value})
+            y += 26
+        _rules.append({"x": _PAD, "x2": _W - _PAD, "y": y - 4})
+        y += 12
+
+        _pros_top = y
+        for _mark, _key in [("+", "strength"), ("\u2212", "limit")]:
+            _line = textwrap.fill(f"{_mark} {spec[_key]}", _WRAP)
+            texts["body"].append({"x": _PAD, "y": y, "t": _line})
+            y += 18 * (_line.count("\n") + 1) + 4
+        y = _pros_top + 22 * _PRO_LINES + 18
+
+        # A dot plot on a shared 0 to 30 scale, one dot per person. People with
+        # the same count stack upward, so all 16 PMData subjects stay visible.
+        texts["note"].append({"x": _PAD, "y": y, "t": "Metrics tracked on 30+ days, one dot per person"})
+        _base = y + 20 + _DOT * _STACK
+        _px = lambda v: _PAD + v / _TICK_MAX * (_W - 2 * _PAD)
+        _seen = Counter()
+        _ticks = []
+        for _v in sorted(rows["tracked"]):
+            _ticks.append({"x": _px(_v), "y": _base - _DOT / 2 - _DOT * _seen[_v]})
+            _seen[_v] += 1
+        _axis = [{"x": _PAD, "x2": _W - _PAD, "y": _base}]
+        for _v in range(0, _TICK_MAX + 1, 10):
+            texts["note"].append({"x": _px(_v), "y": _base + 6, "t": str(_v), "center": True})
+        y = _base + 24
+        return spec, texts, _rules, _ticks, _axis, y
+
+
+    _layouts = {name: _layout(name) for name in SOURCE_CARDS}
+    _H = max(_l[-1] for _l in _layouts.values()) + _PAD
+
+    _px_x = lambda f="x": alt.X(f"{f}:Q", scale=None, axis=None)
+    _px_y = lambda f="y": alt.Y(f"{f}:Q", scale=None, axis=None)
+    _STYLES = {
+        "title": dict(fontSize=24, fontWeight="bold", color="#222"),
+        "role": dict(fontSize=14, fontStyle="italic", color="#555"),
+        "body": dict(fontSize=13, color="#333", lineHeight=18),
+        "label": dict(fontSize=13, color="#555"),
+        "value": dict(fontSize=13, fontWeight="bold", color="#222", align="right"),
+        "note": dict(fontSize=11, color="#666"),
+    }
+
+
+    def _card(name):
+        spec, texts, rules, ticks, axis, _ = _layouts[name]
+        layers = [
+            alt.Chart(alt.Data(values=[{}]))
+            .mark_rect(fill="#f6f6f6", cornerRadius=10)
+            .encode(x=alt.value(0), x2=alt.value(_W), y=alt.value(0), y2=alt.value(_H)),
+            alt.Chart(alt.Data(values=[{}]))
+            .mark_rect(fill=spec["color"], cornerRadiusTopLeft=10, cornerRadiusTopRight=10)
+            .encode(x=alt.value(0), x2=alt.value(_W), y=alt.value(0), y2=alt.value(8)),
+            alt.Chart(alt.Data(values=rules + axis))
+            .mark_rule(color="#cccccc")
+            .encode(x=_px_x(), x2="x2:Q", y=_px_y()),
+            alt.Chart(alt.Data(values=ticks))
+            .mark_circle(color=spec["color"], size=80, opacity=1)
+            .encode(x=_px_x(), y=_px_y()),
+        ]
+        for style, values in texts.items():
+            opts = {"align": "left", "baseline": "top", "lineBreak": "\n", **_STYLES[style]}
+            left = [v for v in values if not v.get("center")]
+            centered = [v for v in values if v.get("center")]
+            for group, extra in [(left, {}), (centered, {"align": "center"})]:
+                if group:
+                    layers.append(
+                        alt.Chart(alt.Data(values=group))
+                        .mark_text(**{**opts, **extra})
+                        .encode(x=_px_x(), y=_px_y(), text="t:N")
+                    )
+        return alt.layer(*layers).properties(width=_W, height=_H)
+
+
+    source_comparison_chart = (
+        alt.hconcat(*[_card(name) for name in SOURCE_CARDS], spacing=24)
+        .properties(
+            title=alt.Title(
+                "Three data sources, three different jobs",
+                subtitle="Kaggle shows the problem, our exports add depth, PMData adds people and labels",
+            )
+        )
+        .configure_title(fontSize=22, subtitleFontSize=14, anchor="start", offset=16)
+        .configure_view(strokeWidth=0)
+    )
+    source_comparison_chart
+    return (source_comparison_chart,)
+
+
+@app.cell
+def export_figures(
+    ROOT,
+    kaggle_json_table_chart,
+    mo,
+    richness_chart,
+    source_comparison_chart,
+):
     # Writes every slide figure as a PNG. scale_factor multiplies the pixel size,
     # so 4 turns the 880 px wide table into about 3500 px.
     FIGURES = ROOT / "figures"
@@ -246,6 +480,7 @@ def export_figures(ROOT, kaggle_json_table_chart, mo, richness_chart):
     _exports = {
         "kaggle_json_overview.png": kaggle_json_table_chart,
         "dataset_richness.png": richness_chart,
+        "source_comparison.png": source_comparison_chart,
     }
     for _name, _chart in _exports.items():
         _chart.save(FIGURES / _name, scale_factor=4)
