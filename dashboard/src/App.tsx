@@ -1,4 +1,4 @@
-import { timeDay, timeFormat } from "d3";
+import { timeDay } from "d3";
 import { type KeyboardEvent, useEffect, useMemo, useState } from "react";
 import { ContributionBars } from "./components/ContributionBars";
 import { MetricCard } from "./components/MetricCard";
@@ -7,19 +7,24 @@ import { TrendTable } from "./components/TrendTable";
 import { VelocityPlot } from "./components/VelocityPlot";
 import { WhatIfPanel } from "./components/WhatIfPanel";
 import { APP_NAME, AXIS_LABELS, SECTION_LABELS, WHAT_IF_LABELS } from "./config";
-import { loadDashboardData, loadTrajectory } from "./data/source";
-import { type ScenarioKey, scenarioDelta, simulatePath } from "./lib/scenarios";
+import { METRICS } from "./data/metrics";
+import { loadIndex, loadSubject } from "./data/source";
+import {
+	type Persistence,
+	positionEffect,
+	type ScenarioKey,
+	scoreDelta,
+	simulatePath,
+} from "./lib/scenarios";
 import { parseDay } from "./lib/stats";
-import { buildStory, pushSentence } from "./lib/story";
-import type { DashboardData, TrajectoryResponse } from "./types";
+import { buildStory } from "./lib/story";
+import type { DashboardIndex, SubjectData } from "./types";
 
 const RANGES = [
 	{ days: 30, label: "30 days" },
 	{ days: 90, label: "90 days" },
 	{ days: 180, label: "180 days" },
 ] as const;
-
-const formatToday = timeFormat("%A, %B %-d");
 
 const TABS = ["aggregate", "daily"] as const;
 type Tab = (typeof TABS)[number];
@@ -31,12 +36,14 @@ function tabFromHash(): Tab {
 }
 
 export function App() {
-	const [data, setData] = useState<DashboardData | null>(null);
+	const [index, setIndex] = useState<DashboardIndex | null>(null);
 	const [subjectId, setSubjectId] = useState<string | null>(null);
-	const [trajectory, setTrajectory] = useState<TrajectoryResponse | null>(null);
+	const [subject, setSubject] = useState<SubjectData | null>(null);
+	const [error, setError] = useState<string | null>(null);
 	const [rangeDays, setRangeDays] = useState<number>(90);
 	const [tab, setTab] = useState<Tab>(tabFromHash);
 	const [scenarios, setScenarios] = useState<ScenarioKey[]>([]);
+	const [persistence, setPersistence] = useState<Persistence>("once");
 
 	useEffect(() => {
 		const sync = () => setTab(tabFromHash());
@@ -68,23 +75,28 @@ export function App() {
 	}
 
 	useEffect(() => {
-		loadDashboardData().then((d) => {
-			setData(d);
-			setSubjectId(d.subjects[0]?.subjectId ?? null);
-		});
+		loadIndex()
+			.then((i) => {
+				setIndex(i);
+				setSubjectId(i.subjects[0]?.subjectId ?? null);
+			})
+			.catch((e: Error) => setError(e.message));
 	}, []);
 
 	useEffect(() => {
 		if (!subjectId) return;
 		let current = true;
-		loadTrajectory(subjectId).then((t) => {
-			if (current) setTrajectory(t);
-		});
+		loadSubject(subjectId)
+			.then((s) => {
+				if (current) setSubject(s);
+			})
+			.catch((e: Error) => setError(e.message));
 		return () => {
 			current = false;
 		};
 	}, [subjectId]);
 
+	const trajectory = subject?.trajectory ?? null;
 	const asOf = useMemo(
 		() => (trajectory ? parseDay(trajectory.asOf) : timeDay.floor(new Date())),
 		[trajectory],
@@ -94,20 +106,22 @@ export function App() {
 		[asOf, rangeDays],
 	);
 
-	const subjectSeries = data && subjectId ? data.series[subjectId] : [];
+	const subjectSeries = subject?.series ?? [];
 	const today = trajectory?.history.at(-1);
 
 	const whatIf = useMemo(() => {
-		if (!trajectory || !today || scenarios.length === 0) return undefined;
-		const delta = scenarioDelta(scenarios);
+		if (!index || !subject || !today || scenarios.length === 0) return undefined;
+		const { keep, prediction } = subject.trajectory;
+		const delta = scoreDelta(scenarios, subject.scaling, index.model.axes);
+		const now = positionEffect(delta, keep, 0, persistence);
 		return {
 			velocity: {
-				activity: today.velocity.activity + delta.activity,
-				recovery: today.velocity.recovery + delta.recovery,
+				activity: today.velocity.activity + now.activity,
+				recovery: today.velocity.recovery + now.recovery,
 			},
-			path: simulatePath(trajectory.prediction, delta),
+			path: simulatePath(prediction, delta, keep, persistence),
 		};
-	}, [trajectory, today, scenarios]);
+	}, [index, subject, today, scenarios, persistence]);
 
 	function toggleScenario(key: ScenarioKey) {
 		setScenarios((current) =>
@@ -118,7 +132,7 @@ export function App() {
 	const story = useMemo(() => (trajectory ? buildStory(trajectory) : null), [trajectory]);
 
 	function dailyCards() {
-		return data?.metrics.map((info) => {
+		return METRICS.map((info) => {
 			const series = subjectSeries.find((s) => s.metric === info.metric);
 			return series ? (
 				<MetricCard key={info.metric} info={info} series={series} end={asOf} />
@@ -130,11 +144,27 @@ export function App() {
 		<div className="app">
 			<header className="app-header">
 				<h1>{APP_NAME}</h1>
-				<span className="badge">Mock data</span>
+				<div className="tabs" role="tablist" aria-label="Dashboard views" onKeyDown={handleTabKey}>
+					{TABS.map((t) => (
+						<button
+							key={t}
+							id={`tab-${t}`}
+							type="button"
+							role="tab"
+							className="tab"
+							aria-selected={t === tab}
+							aria-controls={`panel-${t}`}
+							tabIndex={t === tab ? 0 : -1}
+							onClick={() => selectTab(t)}
+						>
+							{SECTION_LABELS[t]}
+						</button>
+					))}
+				</div>
 				<label className="field">
 					<span>Subject</span>
 					<select value={subjectId ?? ""} onChange={(e) => setSubjectId(e.target.value)}>
-						{data?.subjects.map((s) => (
+						{index?.subjects.map((s) => (
 							<option key={s.subjectId} value={s.subjectId}>
 								{s.label}
 							</option>
@@ -143,36 +173,12 @@ export function App() {
 				</label>
 			</header>
 
-			{data === null || trajectory === null || today === undefined ? (
+			{error ? (
+				<p className="empty">{error}</p>
+			) : subject === null || trajectory === null || today === undefined ? (
 				<p className="empty">Loading…</p>
 			) : (
 				<main>
-					<nav className="tab-bar">
-						<div
-							className="tabs"
-							role="tablist"
-							aria-label="Dashboard views"
-							onKeyDown={handleTabKey}
-						>
-							{TABS.map((t) => (
-								<button
-									key={t}
-									id={`tab-${t}`}
-									type="button"
-									role="tab"
-									className="tab"
-									aria-selected={t === tab}
-									aria-controls={`panel-${t}`}
-									tabIndex={t === tab ? 0 : -1}
-									onClick={() => selectTab(t)}
-								>
-									{SECTION_LABELS[t]}
-								</button>
-							))}
-						</div>
-						<span className="tab-date">{formatToday(asOf)}</span>
-					</nav>
-
 					{/* Both panels stay mounted, so switching tabs does not rebuild the charts. */}
 					<section
 						id="panel-aggregate"
@@ -215,8 +221,12 @@ export function App() {
 											</svg>
 										</button>
 									</header>
-									<p className="note-text">{pushSentence(today.velocity)}</p>
-									<VelocityPlot velocity={today.velocity} whatIf={whatIf?.velocity} maxSize={220} />
+									<VelocityPlot
+										velocity={today.velocity}
+										whatIf={whatIf?.velocity}
+										maxSize={220}
+										crop
+									/>
 									{whatIf && (
 										<ul className="velocity-legend">
 											<li>
@@ -239,6 +249,9 @@ export function App() {
 									active={scenarios}
 									onToggle={toggleScenario}
 									onReset={() => setScenarios([])}
+									persistence={persistence}
+									onPersistence={setPersistence}
+									scaling={subject.scaling}
 									velocity={today.velocity}
 									simulated={whatIf?.velocity ?? today.velocity}
 								/>
@@ -263,7 +276,7 @@ export function App() {
 								))}
 							</fieldset>
 						</div>
-						<TrendTable metrics={data.metrics} series={subjectSeries} domain={aggregateDomain} />
+						<TrendTable metrics={METRICS} series={subjectSeries} domain={aggregateDomain} />
 					</section>
 					<section
 						id="panel-daily"

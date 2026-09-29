@@ -38,3 +38,31 @@ export function verticalBar(x: number, width: number, y0: number, y1: number, ra
 		"Z",
 	].join("");
 }
+
+interface Point {
+	px: number;
+	py: number;
+}
+
+/**
+ * Gaussian smoothing of a path, for drawing only. The width shrinks toward
+ * both ends, so the first and last points stay exactly where they are.
+ */
+export function smoothPath<T extends Point>(points: T[], sigma: number): T[] {
+	const n = points.length;
+	return points.map((point, i) => {
+		const s = Math.min(sigma, i / 2, (n - 1 - i) / 2);
+		if (s <= 0) return point;
+		const reach = Math.ceil(3 * s);
+		let px = 0;
+		let py = 0;
+		let total = 0;
+		for (let j = Math.max(0, i - reach); j <= Math.min(n - 1, i + reach); j++) {
+			const w = Math.exp(-((j - i) ** 2) / (2 * s * s));
+			px += w * points[j].px;
+			py += w * points[j].py;
+			total += w;
+		}
+		return { ...point, px: px / total, py: py / total };
+	});
+}

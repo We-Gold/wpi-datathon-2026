@@ -11,6 +11,7 @@ dependencies = [
 health-prep = "health.cli:main"
 health-model = "health.model_cli:main"
 health-forecast = "health.forecast_cli:main"
+health-export = "health.export_cli:main"
 
 [dependency-groups]
 dev = [
