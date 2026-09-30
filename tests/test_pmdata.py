@@ -120,6 +120,11 @@ class TestNestedValues:
     def test_resting_heart_rate_uses_the_inner_value(self, frame: pl.DataFrame) -> None:
         assert rows(frame, metrics.QUANTITY_PREFIX + "RestingHeartRate")["value_num"].item() == 53.5
 
+    def test_a_zero_resting_heart_rate_is_dropped_as_missing(self, frame: pl.DataFrame) -> None:
+        # The fixture's second day is 0, which Fitbit writes when it has no reading.
+        resting = rows(frame, metrics.QUANTITY_PREFIX + "RestingHeartRate")
+        assert resting.height == 1
+
 
 class TestSleepStages:
     def test_stage_names_become_healthkit_values(self, frame: pl.DataFrame) -> None:

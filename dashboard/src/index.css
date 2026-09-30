@@ -1,0 +1,1007 @@
+/* Light only. The map look depends on a paper colored page. */
+:root {
+	color-scheme: light;
+	--page: #f3efe6;
+	--surface: #fbf9f4;
+	--text-primary: #2b2621;
+	--text-secondary: #5c554c;
+	--text-muted: #8a8278;
+	--grid: #e6e0d4;
+	--baseline: #c9c1b3;
+	--border: rgba(43, 38, 33, 0.12);
+	--ink: #2b2621;
+	/* One color per axis. Checked with the dataviz palette validator. */
+	--activity: #3a8a3f;
+	--recovery: #7d4fc0;
+	/* Neutral data color for the metric cards, so they do not borrow an axis. */
+	--series: #5c554c;
+	/* Simulated what-if marks. Checked with the validator against both axis
+	   colors and the deepest red valley, since the path often crosses one. */
+	--what-if: #e0409a;
+	--good: #2f6f33;
+	--bad: #b5452f;
+	--font: "Source Sans 3 Variable", system-ui, sans-serif;
+	/* Headings, captions and headline numbers. Small chart text stays sans. */
+	--font-serif: "Newsreader Variable", Georgia, serif;
+}
+
+* {
+	box-sizing: border-box;
+}
+
+body {
+	margin: 0;
+	background: var(--page);
+	color: var(--text-primary);
+	font-family: var(--font);
+	font-size: 15px;
+	line-height: 1.45;
+}
+
+.app {
+	max-width: 1440px;
+	margin: 0 auto;
+	padding: 24px 16px 48px;
+}
+
+/* Name on the left, tabs in the middle, subject on the right, on one rule. */
+.app-header {
+	display: grid;
+	grid-template-columns: 1fr auto 1fr;
+	grid-template-areas: "title tabs subject";
+	align-items: center;
+	gap: 12px 24px;
+	margin-bottom: 32px;
+	border-bottom: 1px solid var(--ink);
+}
+
+@media (max-width: 720px) {
+	.app-header {
+		grid-template-columns: 1fr auto;
+		grid-template-areas:
+			"title subject"
+			"tabs tabs";
+	}
+}
+
+h1,
+h2,
+h3 {
+	margin: 0;
+	font-family: var(--font-serif);
+	font-weight: 500;
+	letter-spacing: -0.01em;
+}
+
+h1 {
+	font-size: 34px;
+}
+
+h2 {
+	font-size: 26px;
+}
+
+h3 {
+	font-size: 19px;
+}
+
+.badge {
+	color: var(--text-muted);
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+}
+
+.field {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	color: var(--text-secondary);
+}
+
+.app-header .field {
+	grid-area: subject;
+	justify-self: end;
+}
+
+select {
+	font: inherit;
+	color: var(--text-primary);
+	background: var(--surface);
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	padding: 4px 8px;
+}
+
+/* Tabs */
+
+.tabs {
+	display: flex;
+	gap: 28px;
+}
+
+.tab {
+	margin: 0 0 -1px;
+	padding: 4px 0 8px;
+	border: none;
+	border-bottom: 3px solid transparent;
+	background: none;
+	color: var(--text-muted);
+	font-family: var(--font-serif);
+	font-size: 26px;
+	font-weight: 500;
+	letter-spacing: -0.01em;
+	cursor: pointer;
+}
+
+.tab:hover {
+	color: var(--text-secondary);
+}
+
+.tab[aria-selected="true"] {
+	border-bottom-color: var(--ink);
+	color: var(--text-primary);
+}
+
+.tab:focus-visible {
+	outline: 2px solid var(--ink);
+	outline-offset: 2px;
+}
+
+.app-header h1 {
+	grid-area: title;
+}
+
+/* The selected tab's underline sits on the header's rule. */
+.app-header .tabs {
+	grid-area: tabs;
+	align-self: end;
+}
+
+/* Story: the headline that answers "how am I doing?" */
+
+.story {
+	margin-bottom: 8px;
+}
+
+.story-headline {
+	font-size: clamp(32px, 4.2vw, 52px);
+	line-height: 1.08;
+	letter-spacing: -0.02em;
+}
+
+.story-dek {
+	margin: 12px 0 0;
+	color: var(--text-secondary);
+	font-family: var(--font-serif);
+	font-size: 19px;
+	line-height: 1.45;
+}
+
+.kicker {
+	margin-bottom: 4px;
+	color: var(--text-muted);
+	font-size: 12px;
+	font-weight: 600;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+}
+
+/* Lead row: the map, with notes in the margin */
+
+.lead {
+	display: grid;
+	grid-template-columns: minmax(0, 3fr) minmax(0, 1fr);
+	gap: 40px;
+	align-items: start;
+}
+
+@media (max-width: 1100px) {
+	.lead {
+		grid-template-columns: minmax(0, 1fr);
+	}
+}
+
+.map-figure {
+	min-width: 0;
+	margin: 0;
+}
+
+.margin-notes {
+	display: flex;
+	flex-direction: column;
+	gap: 32px;
+	min-width: 0;
+	padding-left: 24px;
+	border-left: 1px solid var(--baseline);
+}
+
+@media (max-width: 1100px) {
+	.margin-notes {
+		padding-left: 0;
+		border-left: none;
+	}
+}
+
+.note {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+}
+
+.note-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 10px;
+}
+
+.note-header h3 {
+	margin-right: auto;
+}
+
+.icon-button {
+	display: inline-flex;
+	flex: none;
+	align-items: center;
+	justify-content: center;
+	width: 32px;
+	height: 32px;
+	padding: 0;
+	border: 1px solid var(--baseline);
+	border-radius: 50%;
+	background: none;
+	color: var(--text-primary);
+	cursor: pointer;
+}
+
+.icon-button svg {
+	fill: none;
+	stroke: currentColor;
+	stroke-width: 1.75;
+	stroke-linecap: round;
+	stroke-linejoin: round;
+}
+
+.icon-button:hover {
+	border-color: var(--ink);
+	background: var(--grid);
+}
+
+.icon-button:focus-visible,
+.text-button:focus-visible,
+.pill:focus-visible {
+	outline: 2px solid var(--ink);
+	outline-offset: 2px;
+}
+
+.velocity-legend {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: center;
+	gap: 6px 16px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	color: var(--text-secondary);
+	font-size: 12px;
+}
+
+.velocity-legend li {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+/* What if */
+
+.badge-what-if {
+	color: var(--what-if);
+}
+
+.presets {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	margin: 0;
+	padding: 0;
+	border: none;
+}
+
+.pill {
+	padding: 5px 12px;
+	border: 1px solid var(--baseline);
+	border-radius: 999px;
+	background: none;
+	color: var(--text-secondary);
+	font: inherit;
+	font-size: 13px;
+	cursor: pointer;
+}
+
+.pill:hover:not(:disabled) {
+	border-color: var(--text-muted);
+	color: var(--text-primary);
+}
+
+.pill:disabled {
+	border-style: dashed;
+	color: var(--text-muted);
+	cursor: not-allowed;
+}
+
+.pill[aria-pressed="true"] {
+	border-color: var(--what-if);
+	background: color-mix(in srgb, var(--what-if) 12%, transparent);
+	color: var(--text-primary);
+}
+
+.what-if-table {
+	border-collapse: collapse;
+	font-size: 13px;
+	font-variant-numeric: tabular-nums;
+}
+
+.what-if-table th,
+.what-if-table td {
+	padding: 4px 0;
+	text-align: right;
+	font-weight: 400;
+}
+
+.what-if-table th:first-child {
+	text-align: left;
+}
+
+.what-if-head th {
+	color: var(--text-muted);
+	font-size: 12px;
+	border-bottom: 1px solid var(--grid);
+}
+
+.text-button {
+	align-self: flex-start;
+	padding: 0;
+	border: none;
+	background: none;
+	color: var(--text-secondary);
+	font: inherit;
+	font-size: 13px;
+	text-decoration: underline;
+	text-underline-offset: 3px;
+	cursor: pointer;
+}
+
+.text-button:disabled {
+	color: var(--text-muted);
+	text-decoration: none;
+	cursor: default;
+}
+
+/* Trends table */
+
+.trend-table {
+	width: 100%;
+	border-collapse: collapse;
+	font-variant-numeric: tabular-nums;
+}
+
+.trend-head th {
+	padding: 0 0 8px;
+	border-bottom: 1px solid var(--ink);
+	color: var(--text-muted);
+	font-size: 12px;
+	font-weight: 600;
+	letter-spacing: 0.06em;
+	text-align: left;
+	text-transform: uppercase;
+}
+
+.trend-row > * {
+	padding: 10px 0;
+	border-bottom: 1px solid var(--grid);
+	vertical-align: middle;
+}
+
+.trend-table .num {
+	padding-right: 32px;
+	text-align: right;
+	white-space: nowrap;
+}
+
+.trend-delta {
+	font-size: 14px;
+}
+
+.trend-name {
+	font-family: var(--font-serif);
+	font-size: 19px;
+	font-weight: 500;
+	text-align: left;
+}
+
+.trend-value {
+	font-family: var(--font-serif);
+	font-size: 22px;
+	font-weight: 500;
+}
+
+.trend-col {
+	width: 45%;
+}
+
+@media (max-width: 720px) {
+	.trend-col {
+		display: none;
+	}
+}
+
+/* Sections */
+
+.section[hidden] {
+	display: none;
+}
+
+.section {
+	display: flex;
+	flex-direction: column;
+	gap: 24px;
+	min-width: 0;
+}
+
+.subsection-header {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	margin-top: 24px;
+}
+
+.segmented {
+	display: inline-flex;
+	margin: 0;
+	padding: 2px;
+	border: 1px solid var(--border);
+	border-radius: 8px;
+	background: var(--surface);
+}
+
+.segmented label {
+	padding: 4px 10px;
+	border-radius: 6px;
+	color: var(--text-secondary);
+	cursor: pointer;
+}
+
+/* Fills its container, with the options sharing the width evenly. */
+.segmented-fill {
+	display: flex;
+}
+
+.segmented-fill label {
+	flex: 1;
+	text-align: center;
+}
+
+.segmented label.active {
+	background: var(--grid);
+	color: var(--text-primary);
+}
+
+.segmented label:has(input:focus-visible) {
+	outline: 2px solid var(--ink);
+}
+
+.segmented input {
+	position: absolute;
+	opacity: 0;
+	pointer-events: none;
+}
+
+.card-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr));
+	gap: 32px 40px;
+}
+
+/* Cards. No box: charts sit on the page, split by a thin rule. */
+
+.card {
+	min-width: 0;
+}
+
+.metric-card {
+	padding-top: 14px;
+	border-top: 1px solid var(--baseline);
+}
+
+.card-header {
+	display: flex;
+	justify-content: space-between;
+	align-items: flex-start;
+	gap: 12px;
+	margin-bottom: 8px;
+}
+
+.card-subtitle {
+	margin: 2px 0 0;
+	color: var(--text-muted);
+	font-family: var(--font-serif);
+	font-size: 14px;
+	font-style: italic;
+}
+
+.headline {
+	display: grid;
+	grid-template-columns: auto auto;
+	justify-items: end;
+	align-items: baseline;
+	column-gap: 4px;
+	text-align: right;
+}
+
+.headline-value {
+	font-family: var(--font-serif);
+	font-size: 30px;
+	font-weight: 500;
+	font-variant-numeric: lining-nums tabular-nums;
+	line-height: 1.1;
+}
+
+.headline-unit {
+	color: var(--text-secondary);
+}
+
+.delta {
+	grid-column: 1 / -1;
+	font-size: 12px;
+	color: var(--text-secondary);
+}
+
+.delta-good {
+	color: var(--good);
+}
+
+.delta-bad {
+	color: var(--bad);
+}
+
+/* Shared chart parts */
+
+.chart {
+	position: relative;
+}
+
+.chart svg {
+	display: block;
+	overflow: visible;
+}
+
+.gridline {
+	stroke: var(--grid);
+}
+
+.baseline {
+	stroke: var(--baseline);
+}
+
+.tick {
+	fill: var(--text-muted);
+	font-size: 11px;
+	font-variant-numeric: tabular-nums;
+}
+
+.axis-title {
+	fill: var(--text-secondary);
+	font-size: 12px;
+	font-weight: 500;
+}
+
+.axis-key {
+	font-size: 10px;
+}
+
+.axis-key-activity {
+	fill: var(--activity);
+	color: var(--activity);
+}
+
+.axis-key-recovery {
+	fill: var(--recovery);
+	color: var(--recovery);
+}
+
+.value-label {
+	fill: var(--text-primary);
+	font-size: 11px;
+	font-variant-numeric: tabular-nums;
+}
+
+.hit-area {
+	fill: transparent;
+	cursor: crosshair;
+}
+
+.arrow-head {
+	fill: var(--ink);
+}
+
+.velocity-arrow {
+	stroke: var(--ink);
+	stroke-width: 2;
+	stroke-linecap: round;
+}
+
+.tooltip {
+	position: absolute;
+	z-index: 1;
+	pointer-events: none;
+	min-width: 150px;
+	padding: 8px 10px;
+	background: var(--surface);
+	border: 1px solid var(--border);
+	border-radius: 8px;
+	box-shadow: 0 4px 16px rgba(43, 38, 33, 0.14);
+	font-size: 12px;
+	white-space: nowrap;
+}
+
+.tooltip-date {
+	margin-bottom: 4px;
+	color: var(--text-secondary);
+}
+
+.tooltip-row {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+}
+
+.tooltip-row strong {
+	margin-left: auto;
+	padding-left: 12px;
+	font-variant-numeric: tabular-nums;
+}
+
+/* Terrain map */
+
+.contour {
+	stroke: rgba(92, 70, 48, 0.28);
+	stroke-width: 0.75;
+}
+
+.trail {
+	stroke: var(--ink);
+	stroke-width: 2;
+	/* Round caps overlap at each join and show as darker beads on a faded trail. */
+	stroke-linecap: butt;
+}
+
+.legend-trail {
+	color: var(--ink);
+}
+
+.prediction {
+	fill: none;
+	stroke: var(--ink);
+	stroke-width: 2;
+	stroke-linecap: round;
+	stroke-dasharray: 0.1 5;
+}
+
+.prediction-end {
+	fill: var(--page);
+	stroke: var(--ink);
+	stroke-width: 1.5;
+}
+
+.today-dot {
+	fill: var(--ink);
+	stroke: var(--page);
+	stroke-width: 2;
+}
+
+.today-ring {
+	fill: none;
+	stroke: var(--ink);
+	stroke-width: 1.5;
+}
+
+.hover-dot {
+	fill: var(--page);
+	stroke: var(--ink);
+	stroke-width: 2;
+}
+
+.map-legend {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px 20px;
+	margin: 12px 0 0;
+	padding: 0;
+	list-style: none;
+	color: var(--text-secondary);
+	font-size: 12px;
+}
+
+.map-legend li {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.map-legend li:first-child {
+	flex-direction: column;
+	align-items: stretch;
+	gap: 2px;
+	min-width: 180px;
+}
+
+.legend-ramp {
+	display: block;
+	height: 8px;
+	border-radius: 4px;
+	border: 1px solid var(--border);
+}
+
+.legend-ramp-labels {
+	display: flex;
+	justify-content: space-between;
+	gap: 12px;
+}
+
+/* Daily velocity */
+
+.velocity-layout {
+	display: grid;
+	grid-template-columns: minmax(0, 320px) minmax(0, 560px);
+	align-items: center;
+	gap: 24px 48px;
+}
+
+@media (max-width: 720px) {
+	.velocity-layout {
+		grid-template-columns: minmax(0, 1fr);
+	}
+}
+
+.velocity-plot {
+	display: flex;
+	justify-content: center;
+}
+
+.projection {
+	stroke: var(--baseline);
+	stroke-dasharray: 3 3;
+}
+
+.leg {
+	stroke-width: 4;
+	stroke-linecap: round;
+}
+
+.leg-activity {
+	stroke: var(--activity);
+}
+
+.leg-recovery {
+	stroke: var(--recovery);
+}
+
+.origin-dot {
+	fill: var(--ink);
+	stroke: var(--page);
+	stroke-width: 2;
+}
+
+.contributions {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	margin-top: 12px;
+}
+
+.contribution-group {
+	margin: 0;
+}
+
+.contribution-group figcaption {
+	margin-bottom: 4px;
+	color: var(--text-secondary);
+	font-size: 12px;
+	font-weight: 500;
+}
+
+.contribution-group figcaption .axis-key {
+	font-size: 10px;
+}
+
+.contribution-group svg {
+	display: block;
+}
+
+.row-label {
+	fill: var(--text-secondary);
+	font-size: 12px;
+}
+
+.row-total {
+	font-weight: 600;
+	fill: var(--text-primary);
+}
+
+.divider {
+	stroke: var(--grid);
+}
+
+.bar-activity {
+	fill: var(--activity);
+}
+
+.bar-recovery {
+	fill: var(--recovery);
+}
+
+/* Metric cards */
+
+/* A trend never draws outside its own row. */
+.sparkline svg {
+	overflow: hidden;
+}
+
+.line-daily,
+.line-smoothed {
+	fill: none;
+	stroke: var(--series);
+	stroke-width: 2;
+	stroke-linejoin: round;
+	stroke-linecap: round;
+}
+
+.line-daily {
+	stroke-opacity: 0.25;
+}
+
+.end-dot {
+	fill: var(--series);
+	stroke: var(--page);
+	stroke-width: 2;
+}
+
+.crosshair {
+	stroke: var(--baseline);
+}
+
+.column {
+	fill: var(--series);
+	fill-opacity: 0.3;
+}
+
+.column-today {
+	fill-opacity: 1;
+}
+
+.level-dot {
+	fill: var(--series);
+	fill-opacity: 0.35;
+	stroke: var(--page);
+	stroke-width: 2;
+}
+
+.level-dot-today {
+	fill-opacity: 1;
+}
+
+.swatch {
+	display: inline-block;
+	width: 14px;
+	height: 2px;
+	margin-right: 4px;
+	vertical-align: middle;
+	border-radius: 1px;
+	background: var(--series);
+}
+
+.swatch-faint {
+	opacity: 0.3;
+}
+
+.table-view {
+	margin-top: 8px;
+	color: var(--text-secondary);
+	font-size: 12px;
+}
+
+.table-view summary {
+	cursor: pointer;
+}
+
+.table-view table {
+	display: block;
+	max-height: 200px;
+	overflow-y: auto;
+	margin-top: 8px;
+	border-collapse: collapse;
+	font-variant-numeric: tabular-nums;
+}
+
+.table-view th,
+.table-view td {
+	padding: 2px 16px 2px 0;
+	text-align: left;
+}
+
+.empty {
+	color: var(--text-muted);
+}
+
+.visually-hidden {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	overflow: hidden;
+	clip-path: inset(50%);
+	white-space: nowrap;
+}
+
+/* Map labels. A paper colored halo keeps them readable over contours. */
+
+.place-label,
+.path-label {
+	paint-order: stroke;
+	stroke: var(--page);
+	stroke-opacity: 0.85;
+	stroke-width: 3px;
+	stroke-linejoin: round;
+}
+
+.place-label {
+	fill: var(--text-secondary);
+	font-family: var(--font-serif);
+	font-size: 15px;
+	font-style: italic;
+}
+
+.path-label {
+	fill: var(--text-primary);
+	font-size: 12px;
+}
+
+.path-label-strong {
+	font-weight: 600;
+}
+
+.path-label-faint {
+	fill: var(--text-muted);
+}
+
+/* Simulated marks. Long dashes and their own color, so they never read as the
+   model's dotted prediction. */
+
+.what-if-path {
+	fill: none;
+	stroke: var(--what-if);
+	stroke-width: 2.5;
+	stroke-linecap: round;
+	stroke-dasharray: 8 5;
+}
+
+.what-if-end {
+	fill: var(--page);
+	stroke: var(--what-if);
+	stroke-width: 2;
+}
+
+.what-if-arrow {
+	stroke: var(--what-if);
+	stroke-width: 2;
+	stroke-linecap: round;
+	stroke-dasharray: 6 4;
+}
+
+.what-if-arrow-head {
+	fill: var(--what-if);
+}

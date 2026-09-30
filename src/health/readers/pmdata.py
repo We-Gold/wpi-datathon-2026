@@ -90,6 +90,9 @@ class _Timeseries:
     span is how long one record covers. It sets end_utc and end_local. A daily
     total covers a day even though it is stamped at midnight, and reading that
     span off the timestamps alone is not possible.
+
+    zero_is_missing drops records whose value is 0. Fitbit writes 0 on days it
+    has no reading for some streams, and a zero there is not a measurement.
     """
 
     filename: str
@@ -98,6 +101,7 @@ class _Timeseries:
     span: timedelta
     pointer: tuple[str, ...] = ()
     dtype: PolarsDataType = pl.String
+    zero_is_missing: bool = False
 
     def schema(self) -> dict[str, PolarsDataType]:
         """The exact shape to read, built from the pointer.
@@ -125,6 +129,8 @@ _TIMESERIES: tuple[_Timeseries, ...] = (
     _Timeseries(
         "heart_rate.json", _QUANTITY + "HeartRate", "count/min", timedelta(0), ("bpm",), pl.Int64
     ),
+    # 0 on days Fitbit could not estimate it: 11 of 16 subjects have such days,
+    # one of them 34. No one has a resting heart rate of 0.
     _Timeseries(
         "resting_heart_rate.json",
         _QUANTITY + "RestingHeartRate",
@@ -132,6 +138,7 @@ _TIMESERIES: tuple[_Timeseries, ...] = (
         _DAY,
         ("value",),
         pl.Float64,
+        zero_is_missing=True,
     ),
     # Fitbit's calorie figure is basal plus activity in one number. It is not
     # ActiveEnergyBurned and it is not BasalEnergyBurned, and splitting it would
@@ -223,6 +230,8 @@ def _read_timeseries(directory: Path, spec: _Timeseries) -> pl.DataFrame:
     value = pl.col("value")
     for key in spec.pointer:
         value = value.struct.field(key)
+    if spec.zero_is_missing:
+        frame = frame.filter(value != 0)
 
     start = pl.col("dateTime").str.to_datetime("%Y-%m-%d %H:%M:%S", time_unit="us", strict=False)
     return _rows(frame, spec.metric, spec.unit, value, start, start + spec.span, "fitbit")
